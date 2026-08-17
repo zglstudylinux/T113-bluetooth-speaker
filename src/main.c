@@ -15,8 +15,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-/* 板上资源路径（deploy.sh 推送目标） */
-#define BOARD_RES_PATH   "/usr/res/speaker"
+/* 板上资源路径（deploy.sh 推送目标）。
+ * rootfs overlay 只有 ~8MB 放不下 8MB 字体，资源放 /mnt/UDISK（36MB）。 */
+#define BOARD_RES_PATH   "/mnt/UDISK/speaker"
 #define FONT_CN_REGULAR  BOARD_RES_PATH "/fonts/SOURCEHANSANSCN_REGULAR.OTF"
 
 static lv_font_t *g_font_cn_32;
