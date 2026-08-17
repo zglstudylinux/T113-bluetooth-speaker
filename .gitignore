@@ -1,0 +1,12 @@
+# 交叉编译工具链（由 scripts/setup.sh 从 SDK 复制）
+toolchain/
+
+# 构建产物
+build/
+*.o
+src/main.c.bak
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
