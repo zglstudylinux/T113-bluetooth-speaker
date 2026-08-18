@@ -47,8 +47,7 @@ adb shell /sbin/start-stop-daemon -b -m -S -p /tmp/bt_speaker.pid -x /usr/bin/bt
 
 - [x] M0：编译环境 + "蓝牙音箱"中文显示 + 触摸验证
 - [x] M1：蓝牙 bring-up（手机搜到 ZGL_BT_SPEAKER、免 PIN 配对、UI 显示已连接/播放/歌名）
-- [ ] M2：播放/暂停状态 UI 细化
-- [ ] M3：完整歌曲信息（歌手/专辑/进度条/时间/音量条）
+- [x] M2 + M3：完整播放器 UI（歌名/歌手/专辑 + 进度条/时间 + 播放暂停/上一首/下一首按钮 + 音量条）
 - [ ] M4：图片挂载点 + 开机自启 + 收尾
 
 📖 **详细说明文档**：[`docs/project-guide.md`](docs/project-guide.md)（含原理、代码走读、踩坑记录、排查指南，小白向）
