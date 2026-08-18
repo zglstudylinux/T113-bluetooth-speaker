@@ -33,6 +33,11 @@ $ADB push "$PROJ_DIR/third_party/freetype/lib/libfreetype.so.6" /usr/lib/ 2>/dev
 $ADB push "$PROJ_DIR/third_party/freetype/lib/libfreetype.so" /usr/lib/ 2>/dev/null || true
 $ADB push "$PROJ_DIR/third_party/freetype/lib/libbz2.so.1.0" /usr/lib/ 2>/dev/null || true
 
+echo "[deploy] 推送 BT 库（btmanager 4.0.3 good 版，重新烧录固件后必须重推）..."
+$ADB push "$PROJ_DIR/third_party/bt/lib/libbtmg.so" /lib/libbtmg.so
+$ADB push "$PROJ_DIR/third_party/bt/bin/bt_test" /usr/bin/bt_test
+$ADB shell chmod +x /usr/bin/bt_test
+
 echo "[deploy] 启动..."
 $ADB shell "/sbin/start-stop-daemon -K -p /tmp/bt_speaker.pid -x /usr/bin/bt_speaker" 2>/dev/null || true
 $ADB shell "/sbin/start-stop-daemon -b -m -S -p /tmp/bt_speaker.pid -x /usr/bin/bt_speaker"

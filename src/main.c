@@ -3,12 +3,14 @@
  *
  * 显示：sunxifb /dev/fb0，480x640 竖屏（与 lvgl_demo_build 验证配置一致）
  * 触摸：evdev /dev/input/event4（dx_touch）
- * 构建：Makefile（镜像 lvgl_demo_build/src/Makefile），gcc-830 硬浮点动态链接
+ * 蓝牙：btmanager 4.0.3（libbtmg.so）A2DP Sink + AVRCP
  */
 #include "lvgl/lvgl.h"
 #include "lv_drivers/display/sunxifb.h"
 #include "lv_drivers/indev/evdev.h"
 #include "lv_freetype.h"
+#include "bt_speaker.h"
+#include "ui/ui_main.h"
 #include <unistd.h>
 #include <time.h>
 #include <sys/time.h>
@@ -20,11 +22,13 @@
 #define BOARD_RES_PATH   "/mnt/UDISK/speaker"
 #define FONT_CN_REGULAR  BOARD_RES_PATH "/fonts/SOURCEHANSANSCN_REGULAR.OTF"
 
-static lv_font_t *g_font_cn_32;
-static lv_font_t *g_font_cn_48;
+#define BT_ALIAS  "ZGL_BT_SPEAKER"
 
-/* LVGL tick：LV_TICK_CUSTOM=1 时 lv_tick_inc 被宏屏蔽（custom expr 直接供时基），
- * lv_timer 也无需手动喂 tick —— 主循环只跑 lv_timer_handler 即可 */
+/* UI 用字体（ui_main.c extern 引用） */
+lv_font_t *ui_font_cn_32;
+lv_font_t *ui_font_cn_48;
+
+/* LVGL tick：LV_TICK_CUSTOM=1 时 custom_tick_get 直接供时基 */
 uint32_t custom_tick_get(void)
 {
     static uint64_t start_ms = 0;
@@ -41,17 +45,6 @@ uint32_t custom_tick_get(void)
     return (uint32_t)(now_ms - start_ms);
 }
 
-/* 触摸测试：按钮点击计数 */
-static int g_click_count = 0;
-static lv_obj_t *g_btn_label;
-
-static void btn_click_cb(lv_event_t *e)
-{
-    (void)e;
-    g_click_count++;
-    lv_label_set_text_fmt(g_btn_label, "点击 %d 次", g_click_count);
-}
-
 int main(int argc, char *argv[])
 {
     (void)argc; (void)argv;
@@ -59,13 +52,9 @@ int main(int argc, char *argv[])
     lv_disp_drv_init(&disp_drv);
     uint32_t rotated = LV_DISP_ROT_NONE;
 
-    /* LittlevGL init */
     lv_init();
-
-    /* Linux frame buffer device init（480x640，不旋转） */
     sunxifb_init(rotated);
 
-    /* 显示缓冲 */
     static uint32_t width, height;
     sunxifb_get_sizes(&width, &height);
     printf("fb: %ux%u\n", width, height);
@@ -88,7 +77,6 @@ int main(int argc, char *argv[])
     disp_drv.ver_res = height;
     lv_disp_drv_register(&disp_drv);
 
-    /* 触摸输入 */
     evdev_init();
     static lv_indev_drv_t indev_drv;
     lv_indev_drv_init(&indev_drv);
@@ -96,7 +84,7 @@ int main(int argc, char *argv[])
     indev_drv.read_cb = evdev_read;
     lv_indev_drv_register(&indev_drv);
 
-    /* ===== M0 UI：标题 + 中文 + 触摸计数 ===== */
+    /* ===== UI ===== */
     lv_obj_t *scr = lv_scr_act();
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x101418), 0);
 
@@ -113,45 +101,24 @@ int main(int argc, char *argv[])
         .style = FT_FONT_STYLE_NORMAL,
     };
     if (lv_ft_font_init(&ft48) && lv_ft_font_init(&ft32)) {
-        g_font_cn_48 = ft48.font;
-        g_font_cn_32 = ft32.font;
+        ui_font_cn_48 = ft48.font;
+        ui_font_cn_32 = ft32.font;
     } else {
         printf("freetype font load FAIL: %s\n", FONT_CN_REGULAR);
-        /* 降级：用内嵌 Montserrat 14 继续（中文会显示不出来） */
     }
 
-    /* 标题 */
-    lv_obj_t *title = lv_label_create(scr);
-    lv_obj_set_style_text_font(title, g_font_cn_48 ? g_font_cn_48 : &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
-    lv_label_set_text(title, "蓝牙音箱");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 60);
+    ui_main_create();
 
-    /* 分隔线 */
-    lv_obj_t *line = lv_obj_create(scr);
-    lv_obj_set_size(line, 400, 2);
-    lv_obj_set_style_bg_color(line, lv_color_hex(0x2E86DE), 0);
-    lv_obj_set_style_border_width(line, 0, 0);
-    lv_obj_set_style_radius(line, 0, 0);
-    lv_obj_align(line, LV_ALIGN_TOP_MID, 0, 150);
-
-    /* 状态区（M1 起显示蓝牙状态） */
-    lv_obj_t *status = lv_label_create(scr);
-    lv_obj_set_style_text_font(status, g_font_cn_32 ? g_font_cn_32 : &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(status, lv_color_hex(0xAAAAAA), 0);
-    lv_label_set_text(status, "480x640 M0");
-    lv_obj_align(status, LV_ALIGN_TOP_MID, 0, 180);
-
-    /* 触摸测试按钮：点击计数 */
-    lv_obj_t *btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 300, 90);
-    lv_obj_align(btn, LV_ALIGN_CENTER, 0, 80);
-    lv_obj_set_style_radius(btn, 20, 0);
-    g_btn_label = lv_label_create(btn);
-    lv_obj_set_style_text_font(g_btn_label, g_font_cn_32 ? g_font_cn_32 : &lv_font_montserrat_14, 0);
-    lv_label_set_text(g_btn_label, "点击 0 次");
-    lv_obj_center(g_btn_label);
-    lv_obj_add_event_cb(btn, btn_click_cb, LV_EVENT_CLICKED, NULL);
+    /* ===== 蓝牙初始化（在 UI 之后，回调若早到会被 query_state 补发）===== */
+    if (bt_speaker_init(BT_ALIAS, ui_main_bt_observer()) != 0) {
+        lv_obj_t *status = lv_label_create(scr);
+        lv_obj_set_style_text_font(status, ui_font_cn_32, 0);
+        lv_obj_set_style_text_color(status, lv_color_hex(0xE74C3C), 0);
+        lv_label_set_text(status, "蓝牙初始化失败");
+        lv_obj_align(status, LV_ALIGN_BOTTOM_MID, 0, -120);
+    } else {
+        bt_speaker_query_state();   /* adapter 可能已 ON，补发状态到 UI */
+    }
 
     /* ===== 主循环 ===== */
     while (1) {
@@ -159,8 +126,9 @@ int main(int argc, char *argv[])
         usleep((time_till_next > 0 ? time_till_next : 1) * 1000);
     }
 
-    lv_ft_font_destroy(g_font_cn_48);
-    lv_ft_font_destroy(g_font_cn_32);
+    bt_speaker_deinit();
+    lv_ft_font_destroy(ui_font_cn_48);
+    lv_ft_font_destroy(ui_font_cn_32);
     sunxifb_exit();
     return 0;
 }

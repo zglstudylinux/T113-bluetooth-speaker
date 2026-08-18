@@ -19,20 +19,28 @@ CFLAGS  ?= -std=gnu99 -O2 -g \
 	-I$(LVGL_DIR)/ \
 	-I$(CURDIR)/third_party/lvgl/src/extra/libs/freetype \
 	-I$(CURDIR)/third_party/freetype/include \
+	-I$(CURDIR)/third_party/bt/include \
 	-Wall -Wno-unused-function -Wno-unused-parameter -Wno-missing-prototypes \
 	-Wno-sign-compare -Wno-format-nonliteral
 
-# M0 尚未链接 BT 库；M1 起加 -L third_party/bt/lib -lbtmg ...（见 README 里程碑）
+# BT 库（btmanager 4.0.3）：链接用 vendor 副本，运行时用板上 /usr/lib + /lib
+BT_LIB_DIR := $(CURDIR)/third_party/bt/lib
+# 注意链接顺序：btmg 依赖 bluetooth-internal(静态) + glib 系；wirelesscom 依赖 json-c/dbus
 LDFLAGS ?= -lm \
 	-L$(CURDIR)/third_party/freetype/lib -lfreetype \
-	-lz -lbz2 -lpthread -lrt \
+	-L$(BT_LIB_DIR) \
+	-lbtmg -lshared-mainloop -lbluetooth-internal -lwirelesscom \
+	-lgio-2.0 -lgobject-2.0 -lgmodule-2.0 -lglib-2.0 -lffi \
+	-ldbus-1 -lasound -ljson-c -lsbc \
+	-lreadline -lncursesw \
+	-lz -lbz2 -lpthread -lrt -ldl \
 	-Wl,-rpath,/usr/lib
 
 BIN  = bt_speaker
 BUILD = build
 
 #Collect the files to compile
-MAINSRC = ./src/main.c
+MAINSRC = ./src/main.c ./src/bt_speaker.c ./src/ui/ui_main.c
 
 include $(LVGL_DIR)/lvgl/lvgl.mk
 include $(LVGL_DIR)/lv_drivers/lv_drivers.mk
