@@ -20,6 +20,7 @@ CFLAGS  ?= -std=gnu99 -O2 -g \
 	-I$(CURDIR)/third_party/lvgl/src/extra/libs/freetype \
 	-I$(CURDIR)/third_party/freetype/include \
 	-I$(CURDIR)/third_party/bt/include \
+	-DLV_USE_PNG=1 -DLV_USE_FS_POSIX=1 \
 	-Wall -Wno-unused-function -Wno-unused-parameter -Wno-missing-prototypes \
 	-Wno-sign-compare -Wno-format-nonliteral
 

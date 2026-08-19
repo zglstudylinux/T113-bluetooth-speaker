@@ -1,14 +1,22 @@
 /*
  * ui_main.c — 蓝牙音箱主界面（480x640 竖屏）
  *
- * M2/M3 完整播放器 UI：
+ * 布局（M4 图片版）：
+ *   全屏产品图 bt.png（481x641，与屏幕 480x640 基本 1:1，不缩放直接铺满）
+ *   图片是浅色渐变背景 + 白色球形音箱（主体在 y≈240..480），
+ *   文字全部用深色叠加 → 无需避让、无重叠。
+ *
  *   标题 "蓝牙音箱"
  *   歌名（大字，中文 FreeType）
  *   "歌手 - 专辑"
  *   状态行（等待配对 / 已连接 / 播放中 / 已暂停）
- *   进度条 + 时间 "0:00 / 0:00"
+ *   对端地址 + 进度条 + 时间 "0:00 / 0:00"
  *   上一首 / 播放暂停 / 下一首 三个触摸按钮（AVRCP 控制）
  *   右侧竖向音量条
+ *
+ * 图片从 POSIX FS 加载（LV_FS_POSIX_LETTER 'S'），deploy.sh 推到
+ * /mnt/UDISK/speaker/image/。文件缺失时优雅降级为深色纯色 UI
+ * （两套配色方案按图片有无自动切换）。
  *
  * BT 回调在 btmanager 线程 → lv_async_call 转到 LVGL 线程再操作 UI。
  * 参考 app_sdk/app/ui/page_bt_audio.c 的结构，按 480x640 重排坐标。
@@ -19,24 +27,60 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <unistd.h>
 
 /* 由 main.c 提供的字体 */
 extern lv_font_t *ui_font_cn_48;
 extern lv_font_t *ui_font_cn_32;
 
-/* 小号字体用 LVGL 内置 Montserrat（lv_conf.h 已开 14/16），英文/数字/符号够用 */
+/* 小号字体用 LVGL 内置 Montserrat（lv_conf.h 已开 14/16/24），英文/数字/符号够用 */
 #define UI_FONT_SMALL  (&lv_font_montserrat_16)
 #define UI_FONT_TIME   (&lv_font_montserrat_16)
 
-/* 颜色 */
-#define COL_BG       0x101418
-#define COL_TITLE    0xFFFFFF
-#define COL_SONG     0xFFFFFF
-#define COL_SUB      0xAAAAAA
-#define COL_STATUS   0x3498DB
-#define COL_ACCENT   0x2E86DE
-#define COL_BAR_BG   0x333A44
-#define COL_WARN     0xE74C3C
+/* ---------- 配色方案 ----------
+ * 有图（浅色背景图）→ 深色文字；无图（深色纯色背景）→ 浅色文字。
+ * 运行时按图片文件是否存在选一套，两者互不串色。 */
+typedef struct {
+    uint32_t bg;      /* 无图时的屏幕底色 */
+    uint32_t title;   /* 标题 */
+    uint32_t song;    /* 歌名 */
+    uint32_t artist;  /* 歌手-专辑 */
+    uint32_t status;  /* 状态行 */
+    uint32_t sub;     /* 次要文字（地址/时间/音量值） */
+    uint32_t bar_bg;  /* 进度条/音量条底色 */
+    uint32_t accent;  /* 强调色：按钮、进度指示 */
+    uint32_t hint;    /* 底部提示 */
+} ui_scheme_t;
+
+static const ui_scheme_t SCHEME_LIGHT = {  /* 叠在 bt.png 上 */
+    .bg     = 0xCFDCE8,
+    .title  = 0x1B4F8A,
+    .song   = 0x1B4F8A,
+    .artist = 0x3D5468,
+    .status = 0x1A6FB5,
+    .sub    = 0x6B7B8A,
+    .bar_bg = 0xA8B8C8,
+    .accent = 0x1A6FB5,
+    .hint   = 0x8A98A6,
+};
+static const ui_scheme_t SCHEME_DARK = {   /* 无图降级 */
+    .bg     = 0x101418,
+    .title  = 0xFFFFFF,
+    .song   = 0xFFFFFF,
+    .artist = 0xDDEEFF,
+    .status = 0x3498DB,
+    .sub    = 0xAAAAAA,
+    .bar_bg = 0x333A44,
+    .accent = 0x2E86DE,
+    .hint   = 0x555555,
+};
+
+static const ui_scheme_t *g_scheme = &SCHEME_DARK;
+
+/* 图片资源路径：deploy.sh 推到 /mnt/UDISK/speaker/image/。
+ * LVGL POSIX FS 盘符 'S'（lv_conf.h LV_FS_POSIX_LETTER）。 */
+#define IMG_BG_FILE  "/mnt/UDISK/speaker/image/bt.png"
+#define IMG_BG_PATH  "S:" IMG_BG_FILE
 
 /* ========== UI 对象 ========== */
 static lv_obj_t *g_status_label;    /* 状态大字：等待配对/已连接/播放中/已暂停 */
@@ -45,7 +89,7 @@ static lv_obj_t *g_artist_label;    /* "歌手 - 专辑" */
 static lv_obj_t *g_addr_label;      /* 对端地址 */
 static lv_obj_t *g_bar;             /* 进度条 */
 static lv_obj_t *g_time_label;      /* "0:00 / 0:00" */
-static lv_obj_t *g_play_icon;       /* 播放/暂停图标（img，用 LV_SYMBOL） */
+static lv_obj_t *g_play_icon;       /* 播放/暂停图标（label，用 LV_SYMBOL） */
 static lv_obj_t *g_vol_bar;         /* 音量条 */
 static lv_obj_t *g_vol_label;       /* 音量数值 */
 
@@ -128,9 +172,9 @@ static void ui_play_icon_cb(void *p)
 {
     int st = (int)(intptr_t)p;
     if (st == 1)
-        lv_img_set_src(g_play_icon, LV_SYMBOL_PAUSE);
+        lv_label_set_text(g_play_icon, LV_SYMBOL_PAUSE);
     else
-        lv_img_set_src(g_play_icon, LV_SYMBOL_PLAY);
+        lv_label_set_text(g_play_icon, LV_SYMBOL_PLAY);
 }
 
 /* ========== 线程安全投递 ========== */
@@ -263,12 +307,12 @@ static void btn_play_cb(lv_event_t *e)
     /* 读当前图标判断态：PAUSE 表示正在播放 → 发 pause；否则发 play。
      * 乐观更新：点击瞬间立刻切图标给即时视觉反馈，不等 AVRCP 回调往返
      * （手机确认要 1~2s，否则按钮看起来"没反应/很慢"）。回调回来会再校正。 */
-    const void *src = lv_img_get_src(g_play_icon);
-    if (src && strcmp((const char *)src, LV_SYMBOL_PAUSE) == 0) {
-        lv_img_set_src(g_play_icon, LV_SYMBOL_PLAY);   /* 立刻切 */
+    const char *txt = lv_label_get_text(g_play_icon);
+    if (txt && strcmp(txt, LV_SYMBOL_PAUSE) == 0) {
+        lv_label_set_text(g_play_icon, LV_SYMBOL_PLAY);    /* 立刻切 */
         bt_speaker_avrcp_cmd(1);   /* pause */
     } else {
-        lv_img_set_src(g_play_icon, LV_SYMBOL_PAUSE);  /* 立刻切 */
+        lv_label_set_text(g_play_icon, LV_SYMBOL_PAUSE);   /* 立刻切 */
         bt_speaker_avrcp_cmd(0);   /* play */
     }
 }
@@ -292,11 +336,11 @@ static lv_obj_t *create_ctrl_btn(lv_obj_t *parent, const void *symbol,
     lv_obj_t *btn = lv_btn_create(parent);
     lv_obj_set_size(btn, size, size);
     lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(COL_ACCENT), 0);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(g_scheme->accent), 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_set_style_border_width(btn, 0, 0);
-    lv_obj_set_style_text_color(btn, lv_color_hex(COL_TITLE), 0);
+    lv_obj_set_style_text_color(btn, lv_color_hex(0xFFFFFF), 0);
     lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *ico = lv_label_create(btn);
@@ -310,98 +354,102 @@ static lv_obj_t *create_ctrl_btn(lv_obj_t *parent, const void *symbol,
 void ui_main_create(void)
 {
     lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, lv_color_hex(COL_BG), 0);
+
+    /* 图片存在 → 浅色方案叠图；不存在 → 深色纯色方案（优雅降级） */
+    bool has_img = (access(IMG_BG_FILE, R_OK) == 0);
+    g_scheme = has_img ? &SCHEME_LIGHT : &SCHEME_DARK;
+
+    lv_obj_set_style_bg_color(scr, lv_color_hex(g_scheme->bg), 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* ---- 全屏产品图：481x641 直接铺满 480x640（默认 zoom 256 = 1:1）---- */
+    if (has_img) {
+        lv_obj_t *bg_img = lv_img_create(scr);
+        lv_img_set_src(bg_img, IMG_BG_PATH);
+        lv_obj_clear_flag(bg_img, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_align(bg_img, LV_ALIGN_TOP_MID, 0, 0);
+    }
 
     /* ---- 顶部标题 ---- */
     lv_obj_t *title = lv_label_create(scr);
     lv_obj_set_style_text_font(title, ui_font_cn_48, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(COL_TITLE), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(g_scheme->title), 0);
     lv_label_set_text(title, "蓝牙音箱");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
-
-    /* 标题下分隔线 */
-    lv_obj_t *line = lv_obj_create(scr);
-    lv_obj_set_size(line, 380, 2);
-    lv_obj_set_style_bg_color(line, lv_color_hex(COL_ACCENT), 0);
-    lv_obj_set_style_border_width(line, 0, 0);
-    lv_obj_set_style_radius(line, 0, 0);
-    lv_obj_set_style_pad_all(line, 0, 0);
-    lv_obj_align(line, LV_ALIGN_TOP_MID, 0, 88);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 12);
 
     /* ---- 歌名（大字，长歌名换行）---- */
     g_song_label = lv_label_create(scr);
     lv_obj_set_style_text_font(g_song_label, ui_font_cn_48, 0);
-    lv_obj_set_style_text_color(g_song_label, lv_color_hex(COL_SONG), 0);
+    lv_obj_set_style_text_color(g_song_label, lv_color_hex(g_scheme->song), 0);
     lv_obj_set_width(g_song_label, 440);
     lv_label_set_long_mode(g_song_label, LV_LABEL_LONG_WRAP);
     lv_label_set_text(g_song_label, "—");
     lv_obj_set_style_text_align(g_song_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(g_song_label, LV_ALIGN_TOP_MID, 0, 110);
+    lv_obj_align(g_song_label, LV_ALIGN_TOP_MID, 0, 120);
 
     /* ---- "歌手 - 专辑" ---- */
     g_artist_label = lv_label_create(scr);
     lv_obj_set_style_text_font(g_artist_label, ui_font_cn_32, 0);
-    lv_obj_set_style_text_color(g_artist_label, lv_color_hex(COL_SUB), 0);
+    lv_obj_set_style_text_color(g_artist_label, lv_color_hex(g_scheme->artist), 0);
     lv_obj_set_width(g_artist_label, 440);
     lv_label_set_long_mode(g_artist_label, LV_LABEL_LONG_DOT);
     lv_label_set_text(g_artist_label, "");
     lv_obj_set_style_text_align(g_artist_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(g_artist_label, LV_ALIGN_TOP_MID, 0, 230);
+    lv_obj_align(g_artist_label, LV_ALIGN_TOP_MID, 0, 195);
 
     /* ---- 状态大字 ---- */
     g_status_label = lv_label_create(scr);
     lv_obj_set_style_text_font(g_status_label, ui_font_cn_32, 0);
-    lv_obj_set_style_text_color(g_status_label, lv_color_hex(COL_STATUS), 0);
+    lv_obj_set_style_text_color(g_status_label, lv_color_hex(g_scheme->status), 0);
     lv_label_set_text(g_status_label, "初始化中");
-    lv_obj_align(g_status_label, LV_ALIGN_TOP_MID, 0, 300);
+    lv_obj_align(g_status_label, LV_ALIGN_TOP_MID, 0, 255);
 
     /* ---- 对端地址 ---- */
     g_addr_label = lv_label_create(scr);
     lv_obj_set_style_text_font(g_addr_label, UI_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(g_addr_label, lv_color_hex(COL_SUB), 0);
+    lv_obj_set_style_text_color(g_addr_label, lv_color_hex(g_scheme->sub), 0);
     lv_label_set_text(g_addr_label, "");
-    lv_obj_align(g_addr_label, LV_ALIGN_TOP_MID, 0, 348);
+    lv_obj_align(g_addr_label, LV_ALIGN_TOP_MID, 0, 305);
 
     /* ---- 进度条 ---- */
     g_bar = lv_bar_create(scr);
-    lv_obj_set_size(g_bar, 420, 10);
+    lv_obj_set_size(g_bar, 380, 8);
     lv_bar_set_range(g_bar, 0, 100);
     lv_bar_set_value(g_bar, 0, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(g_bar, lv_color_hex(COL_BAR_BG), 0);
-    lv_obj_set_style_bg_color(g_bar, lv_color_hex(COL_ACCENT), LV_PART_INDICATOR);
-    lv_obj_set_style_radius(g_bar, 5, 0);
-    lv_obj_align(g_bar, LV_ALIGN_TOP_MID, 0, 400);
+    lv_obj_set_style_bg_color(g_bar, lv_color_hex(g_scheme->bar_bg), 0);
+    lv_obj_set_style_bg_color(g_bar, lv_color_hex(g_scheme->accent), LV_PART_INDICATOR);
+    lv_obj_set_style_radius(g_bar, 4, 0);
+    lv_obj_align(g_bar, LV_ALIGN_TOP_MID, 0, 335);
 
     /* ---- 时间 "0:00 / 0:00" ---- */
     g_time_label = lv_label_create(scr);
     lv_obj_set_style_text_font(g_time_label, UI_FONT_TIME, 0);
-    lv_obj_set_style_text_color(g_time_label, lv_color_hex(COL_SUB), 0);
+    lv_obj_set_style_text_color(g_time_label, lv_color_hex(g_scheme->sub), 0);
     lv_label_set_text(g_time_label, "0:00 / 0:00");
-    lv_obj_align(g_time_label, LV_ALIGN_TOP_MID, 0, 418);
+    lv_obj_align(g_time_label, LV_ALIGN_TOP_MID, 0, 350);
 
     /* ---- 控制按钮行：上一首 / 播放暂停 / 下一首 ---- */
-    lv_obj_t *btn_prev = create_ctrl_btn(scr, LV_SYMBOL_PREV, 56, btn_prev_cb);
-    lv_obj_align(btn_prev, LV_ALIGN_TOP_MID, -120, 470);
+    lv_obj_t *btn_prev = create_ctrl_btn(scr, LV_SYMBOL_PREV, 52, btn_prev_cb);
+    lv_obj_align(btn_prev, LV_ALIGN_TOP_MID, -110, 390);
 
-    /* 播放/暂停用稍大按钮，里面放 img 以便切图标 */
+    /* 播放/暂停用稍大按钮，里面放 label 以便切图标 */
     lv_obj_t *btn_play = lv_btn_create(scr);
-    lv_obj_set_size(btn_play, 76, 76);
+    lv_obj_set_size(btn_play, 72, 72);
     lv_obj_set_style_radius(btn_play, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(btn_play, lv_color_hex(COL_ACCENT), 0);
+    lv_obj_set_style_bg_color(btn_play, lv_color_hex(g_scheme->accent), 0);
     lv_obj_set_style_shadow_width(btn_play, 0, 0);
     lv_obj_set_style_border_width(btn_play, 0, 0);
-    lv_obj_align(btn_play, LV_ALIGN_TOP_MID, 0, 470);
+    lv_obj_align(btn_play, LV_ALIGN_TOP_MID, 0, 378);
     lv_obj_add_event_cb(btn_play, btn_play_cb, LV_EVENT_CLICKED, NULL);
 
     g_play_icon = lv_label_create(btn_play);
     lv_label_set_text(g_play_icon, LV_SYMBOL_PLAY);
     lv_obj_set_style_text_font(g_play_icon, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(g_play_icon, lv_color_hex(COL_TITLE), 0);
+    lv_obj_set_style_text_color(g_play_icon, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(g_play_icon);
 
-    lv_obj_t *btn_next = create_ctrl_btn(scr, LV_SYMBOL_NEXT, 56, btn_next_cb);
-    lv_obj_align(btn_next, LV_ALIGN_TOP_MID, 120, 470);
+    lv_obj_t *btn_next = create_ctrl_btn(scr, LV_SYMBOL_NEXT, 52, btn_next_cb);
+    lv_obj_align(btn_next, LV_ALIGN_TOP_MID, 110, 390);
 
     /* ---- 右侧竖向音量条 ---- */
     lv_obj_t *vol_cont = lv_obj_create(scr);
@@ -409,11 +457,12 @@ void ui_main_create(void)
     lv_obj_set_style_bg_opa(vol_cont, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(vol_cont, 0, 0);
     lv_obj_set_style_pad_all(vol_cont, 0, 0);
-    lv_obj_align(vol_cont, LV_ALIGN_RIGHT_MID, -8, 30);
+    lv_obj_clear_flag(vol_cont, LV_OBJ_FLAG_SCROLLABLE);   /* 容器默认可滚动，会干扰子对象定位 */
+    lv_obj_align(vol_cont, LV_ALIGN_RIGHT_MID, -8, 10);
 
     g_vol_label = lv_label_create(vol_cont);
     lv_obj_set_style_text_font(g_vol_label, UI_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(g_vol_label, lv_color_hex(COL_SUB), 0);
+    lv_obj_set_style_text_color(g_vol_label, lv_color_hex(g_scheme->sub), 0);
     lv_label_set_text(g_vol_label, "0");
     lv_obj_align(g_vol_label, LV_ALIGN_TOP_MID, 0, 0);
 
@@ -421,15 +470,16 @@ void ui_main_create(void)
     lv_obj_set_size(g_vol_bar, 10, 110);
     lv_bar_set_range(g_vol_bar, 0, 127);
     lv_bar_set_value(g_vol_bar, 0, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(g_vol_bar, lv_color_hex(COL_BAR_BG), 0);
-    lv_obj_set_style_bg_color(g_vol_bar, lv_color_hex(COL_ACCENT), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(g_vol_bar, lv_color_hex(g_scheme->bar_bg), 0);
+    lv_obj_set_style_bg_opa(g_vol_bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(g_vol_bar, lv_color_hex(g_scheme->accent), LV_PART_INDICATOR);
     lv_obj_set_style_radius(g_vol_bar, 5, 0);
-    lv_obj_align(g_vol_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_pos(g_vol_bar, 15, 38);   /* 40 宽容器内居中 x=15；不用 align，避开滚动重排 */
 
     /* ---- 底部提示 ---- */
     lv_obj_t *hint = lv_label_create(scr);
     lv_obj_set_style_text_font(hint, UI_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(hint, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(g_scheme->hint), 0);
     lv_label_set_text(hint, "手机搜索 ZGL_BT_SPEAKER 配对");
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -16);
 }

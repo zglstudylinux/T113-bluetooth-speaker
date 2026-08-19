@@ -45,9 +45,12 @@ Tina SDK 默认工具链 `arm-linux-gnueabi`（linaro 5.3.1）是**软浮点**�
 T113-bluetooth-speaker/
 ├── Makefile                  # 交叉编译入口（见 §2）
 ├── README.md
+├── CLAUDE.md                 # 给 Claude Code 的仓库操作指南
 ├── .gitignore                # 排除 toolchain/ build/
 ├── docs/                     # 本文档 + 截图
 │   └── project-guide.md
+├── firmware/
+│   └── rtl8723ds/           # 实测好的 BT 固件集（fw/config/rtk_hciattach + md5）
 ├── scripts/
 │   ├── setup.sh             # 首次：从 Tina SDK 复制工具链到 ./toolchain/
 │   └── deploy.sh            # adb 部署到开发板 + 启动
@@ -61,7 +64,7 @@ T113-bluetooth-speaker/
 │       └── bin/             # bt_test（调试用）
 ├── assets/
 │   ├── fonts/               # 中文字体（思源黑体 .otf，运行时加载）
-│   └── images/              # 界面图片（后续 M4 添加）
+│   └── image/               # 界面图片（bt.png，运行时从板上加载）
 └── src/                     # 我们自己的代码
     ├── main.c               # 程序入口
     ├── lv_conf.h            # LVGL 配置（颜色深度、字体、各功能开关）
@@ -467,9 +470,55 @@ AVRCP 协议**拿不到歌词**，只能拿歌名/歌手/专辑/时长/进度/�
 
 ---
 
+### ✅ M4a：产品图片 UI（已完成 2026-08-19）
+
+**目标**：把屏厂给的 `bt.png` 产品图（白色球形音箱）上屏，整体 UI 布局优化。
+
+**做了什么**：
+1. **图片从文件系统加载**（不走 C 数组内嵌）：lv_conf.h 开 `LV_USE_PNG 1` +
+   `LV_USE_FS_POSIX 1`（盘符 `'S'`，路径 `"S:/mnt/UDISK/speaker/image/bt.png"`，
+   decoder 自动剥盘符后按绝对路径 open）。图片由 `deploy.sh` 推到板上
+   `/mnt/UDISK/speaker/image/`，**换图不用重编译**，同名覆盖重启 app 即生效。
+2. **`LV_MEM_CUSTOM 1`**（改用系统 malloc）：PNG 解码 481×641 ARGB 需 ~1.2MB，
+   超 LVGL 默认内存池；system malloc 后一次到位。
+3. **布局方案两次迭代**：
+   - 先试"zoom 缩小放顶部"：发现 lv_img 的 zoom 行为是 **对象保持原图尺寸、
+     缩放后的内容在对象内居中**，文字排布与实际显示内容对不上；
+   - 像素分析 bt.png 后发现 **481×641 与屏幕 480×640 几乎 1:1**、主体（球形
+     音箱）在 y≈240..500、顶/底是干净渐变背景 → 改为**全屏铺底不缩放**，
+     文字用深蓝色叠在浅色图上，布局一次到位。
+4. **双色方案自动切换**：图片存在（`access()` 检测）→ 深蓝文字/深蓝按钮叠图；
+   图片缺失 → 自动回退旧深色 UI（浅色文字），不会白底白字。
+5. **修复音量条不渲染的隐藏 bug**：右侧音量条从 M2/M3 起就只有"0"数字、
+   110px 竖条本体一直没画出来（旧深色主题下条与背景色接近，肉眼没发现）。
+   原因：`lv_obj` 容器默认可滚动（`LV_OBJ_FLAG_SCROLLABLE`），干扰子对象
+   `lv_bar` 的对齐定位。修复：清滚动 flag + 改用 `lv_obj_set_pos` 绝对坐标。
+6. **播放图标改回 lv_label**：`LV_SYMBOL_*` 本质是字体字形，label 比 img 直接。
+
+**踩的坑（重要）**：
+- **Makefile 不跟踪 lv_conf.h 依赖**：改 lv_conf.h 后必须
+  `find build -name "*.o" -delete && make` 全量重编，否则旧 .o 里宏开关还是旧值，
+  症状千奇百怪（这次是 PNG decoder 注册代码整个没编进去，图片不显示但无报错）。
+- **lodepng.c 的 include 链不经过 lv_conf.h**：它有 `#if LV_USE_PNG` 保护但只
+  include lodepng.h → 编译成空目标文件。Makefile CFLAGS 加
+  `-DLV_USE_PNG=1 -DLV_USE_FS_POSIX=1` 解决。
+- **fb 抓屏字节序是 BGRX**（不是 RGBX），分析截图时搞反会得出"颜色不对"的
+  错误结论（这次把 accent 蓯误判成橙色，绕了一圈）。
+
+**验证结果**（用户上板确认）：
+- ✅ 全屏产品图铺满（fb 采样与原图 9/9 像素级一致）
+- ✅ 深蓝标题/歌名/状态/时间叠图清晰可读
+- ✅ 三个圆形深蓝按钮叠在球体图上，观感协调
+- ✅ 右侧音量条竖条本体正常渲染（x≈447..456，高 110px）
+- ✅ 图缺失时优雅降级回深色 UI
+
+**提交**：（本次 push）
+
+---
+
 ## 7. 后续里程碑（待做）
 
-- [ ] **M4**：图片资源挂载点（放 PNG 即生效）+ 开机自启 + 收尾
+- [ ] **M4b**：开机自启（rc.final / init 脚本）+ README 收尾
 
 ---
 
@@ -497,10 +546,9 @@ AVRCP 协议**拿不到歌词**，只能拿歌名/歌手/专辑/时长/进度/�
   2. **本地 .lrc 预置**：提前把歌词文件放板子，按歌名匹配。不现实——歌是手机放的，板子无法预知用户放什么。
 - **为何暂不做**：方案 1 是独立大功能（需 WiFi 联网生态），超出"蓝牙音箱"范畴；方案 2 不可行。
 
-### 8.4 图片资源（M4 待做）
-- **现状**：UI 全部用纯色 + 文字 + 符号，无图片。
-- **优化思路**：M4 加 `lv_img` 挂载点，运行时从 `/mnt/UDISK/speaker/image/` 加载 PNG，文件不存在时优雅降级为纯色背景。用户后续放 PNG 即生效。
-- **状态**：计划在 M4 实现。
+### 8.4 图片资源（✅ 已在 M4a 实现）
+- **现状**：M4a 已实现全屏产品图（`assets/image/bt.png` → 板上 `/mnt/UDISK/speaker/image/bt.png`），文件系统加载 + 缺图优雅降级。换图同名覆盖重启 app 即生效，不用重编译。
+- **剩余可优化**：图片是 270KB PNG 每次启动解码 ~1.2MB 内存 + 解码耗时；若后续多图/动画需求，可考虑预转换 LVGL 二进制格式（`lv_img_conv`）或缩到屏幕精确尺寸。当前单图无感，不做。
 
 ---
 
