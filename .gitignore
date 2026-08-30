@@ -10,3 +10,7 @@ src/main.c.bak
 .vscode/
 .idea/
 *.swp
+build-cmake/
+CMakeLists.txt.user
+CMakeUserPresets.json
+build-host/
