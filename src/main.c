@@ -25,8 +25,8 @@
 #define BT_ALIAS  "ZGL_BT_SPEAKER"
 
 /* UI 用字体（ui_main.c extern 引用） */
-lv_font_t *ui_font_cn_32;
-lv_font_t *ui_font_cn_48;
+lv_font_t *ui_font_cn_22;
+lv_font_t *ui_font_cn_44;
 
 /* LVGL tick：LV_TICK_CUSTOM=1 时 custom_tick_get 直接供时基 */
 uint32_t custom_tick_get(void)
@@ -90,19 +90,19 @@ int main(int argc, char *argv[])
 
     /* FreeType 中文字体（运行时加载 .otf，本 lvgl 树用 lv_ft_font_init API） */
     lv_freetype_init(4, 4, 128 * 1024);
-    static lv_ft_info_t ft48 = {
+    static lv_ft_info_t ft44 = {
         .name = FONT_CN_REGULAR,
-        .weight = 48,
+        .weight = 44,
         .style = FT_FONT_STYLE_NORMAL,
     };
-    static lv_ft_info_t ft32 = {
+    static lv_ft_info_t ft22 = {
         .name = FONT_CN_REGULAR,
-        .weight = 32,
+        .weight = 22,
         .style = FT_FONT_STYLE_NORMAL,
     };
-    if (lv_ft_font_init(&ft48) && lv_ft_font_init(&ft32)) {
-        ui_font_cn_48 = ft48.font;
-        ui_font_cn_32 = ft32.font;
+    if (lv_ft_font_init(&ft44) && lv_ft_font_init(&ft22)) {
+        ui_font_cn_44 = ft44.font;
+        ui_font_cn_22 = ft22.font;
     } else {
         printf("freetype font load FAIL: %s\n", FONT_CN_REGULAR);
     }
@@ -112,7 +112,7 @@ int main(int argc, char *argv[])
     /* ===== 蓝牙初始化（在 UI 之后，回调若早到会被 query_state 补发）===== */
     if (bt_speaker_init(BT_ALIAS, ui_main_bt_observer()) != 0) {
         lv_obj_t *status = lv_label_create(scr);
-        lv_obj_set_style_text_font(status, ui_font_cn_32, 0);
+        lv_obj_set_style_text_font(status, ui_font_cn_22, 0);
         lv_obj_set_style_text_color(status, lv_color_hex(0xE74C3C), 0);
         lv_label_set_text(status, "蓝牙初始化失败");
         lv_obj_align(status, LV_ALIGN_BOTTOM_MID, 0, -120);
@@ -127,8 +127,8 @@ int main(int argc, char *argv[])
     }
 
     bt_speaker_deinit();
-    lv_ft_font_destroy(ui_font_cn_48);
-    lv_ft_font_destroy(ui_font_cn_32);
+    lv_ft_font_destroy(ui_font_cn_44);
+    lv_ft_font_destroy(ui_font_cn_22);
     sunxifb_exit();
     return 0;
 }

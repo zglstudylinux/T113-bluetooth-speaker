@@ -141,8 +141,9 @@
  *If only the built-in image formats are used there is no real advantage of caching. (I.e. if no new image decoder is added)
  *With complex image decoders (e.g. PNG or JPG) caching can save the continuous open/decode of images.
  *However the opened images might consume additional RAM.
- *0: to disable caching*/
-#define LV_IMG_CACHE_DEF_SIZE 0
+ *0: to disable caching
+ *2: bg.png + disc.png 解码常驻 —— 唱盘每帧旋转都重画，无缓存会每 33ms 整图解码一次*/
+#define LV_IMG_CACHE_DEF_SIZE 2
 
 /*Number of stops allowed per gradient. Increase this to allow more stops.
  *This adds (sizeof(lv_color_t) + 1) bytes per additional stop*/
