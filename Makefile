@@ -15,6 +15,10 @@ LVGL_DIR ?= $(CURDIR)/third_party
 
 CFLAGS  ?= -std=gnu99 -O2 -g \
 	-march=armv7-a -mtune=cortex-a7 -mfpu=neon -mfloat-abi=hard \
+	-I$(CURDIR) \
+	-I$(CURDIR)/osal \
+	-I$(CURDIR)/core \
+	-I$(CURDIR)/services \
 	-I$(CURDIR)/src \
 	-I$(LVGL_DIR)/ \
 	-I$(CURDIR)/third_party/lvgl/src/extra/libs/freetype \
@@ -41,7 +45,8 @@ BIN  = bt_speaker
 BUILD = build
 
 #Collect the files to compile
-MAINSRC = ./src/main.c ./src/bt_speaker.c ./src/ui/ui_main.c
+# 阶段3 起业务层迁 services/btmg（事件化），src/bt_speaker.c 退役（阶段4 删）
+MAINSRC = ./src/main.c ./src/ui/ui_main.c ./apps/app_player.c ./services/btmg/btmg_player.c ./osal/osal_posix.c
 
 include $(LVGL_DIR)/lvgl/lvgl.mk
 include $(LVGL_DIR)/lv_drivers/lv_drivers.mk

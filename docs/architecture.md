@@ -375,8 +375,8 @@ jobs:
 |---|---|---|---|
 | **0** | 本文档评审通过 | 用户确认 | ✅ 2026-08-30 |
 | **1** | CMake 骨架：顶层 + lvgl/lv_drivers 收集 + 2 个 toolchain 文件；**源码不动**，仍编 src/ 三件套 | 本机 cmake 编出 ELF 与 Makefile 产物等价（`file`/大小/`nm` 关键符号比对）；deploy 上板跑通无回归 | ✅ 2026-08-31（见下方实施记录） |
-| **2** | `core/player_types.h` + `osal/osal.h` + `osal_posix.c`；host 侧队列收发自测程序 | host 上跑通：多线程生产/消费、丢最旧策略正确 | ☐ |
-| **3** | 业务迁移：`services/btmg/btmg_player.c`（事件化改造）+ main 改为队列 drain（此阶段 UI 仍用旧文件，drain 后转调现有 UI 更新函数） | **板上全回归**：配对/播放/进度/音量/三按钮/乐观更新/断连清屏 | ☐ |
+| **2** | `core/player_types.h` + `osal/osal.h` + `osal_posix.c`；host 侧队列收发自测程序 | host 上跑通：多线程生产/消费、丢最旧策略正确 | ✅ 2026-08-31 |
+| **3** | 业务迁移：`services/btmg/btmg_player.c`（事件化改造）+ main 改为队列 drain（此阶段 UI 仍用旧文件，drain 后转调现有 UI 更新函数） | **板上全回归**：配对/播放/进度/音量/三按钮/乐观更新/断连清屏 | ✅ 代码完成（板上回归待用户执行） |
 | **4** | UI 迁移：`ui/themes/liquidglass/` + `ports/lv_port_*` + `main_linux.c` 组装；删 `src/` 与 `Makefile` | 板上全回归 + 删 bg.png 验证降级 UI；素材恢复验证主题 UI | ☐ |
 | **5** | `services/sim/` + host 构建目标 + `.github/workflows/build.yml`；推送触发首次 CI | CI 两 job 全绿；sim 自测通过 | ☐ |
 | **6** | `project-guide.md` 追加架构重构节 + 本文档按实况修订（接口若有出入） | 文档与代码一致 | ☐ |
@@ -401,6 +401,39 @@ cmake --build build-cmake -j
 5. **产物等价性结论**：CMake 产物（3.5MB @ -O2 -g）比 Makefile（4.2MB）小 ~700KB，原因是**链接方式差异**：Makefile 把全部 .o 直接塞进链接（不管引用与否），CMake 走静态库按需拉成员——未引用的 LVGL 组件（canvas/imgbtn/spangroup/qrcodegen/basic+mono 主题等 ~90 个符号）被链接器丢弃。全局符号比对：CMake 是 Makefile 的**行为等价子集**，无一个"多出来"的符号，所有被引用符号全部解析。属于收益（更小的 footprint），非功能差异。
 6. **上板验证**：`file` 确认 ELF 32-bit ARM hard-float；deploy 后 UI 完整渲染（fb0 抓帧比对 D1 主题一致）、`hci0 UP RUNNING PSCAN ISCAN`、名字 ZGL_BT_SPEAKER、进程常驻。首验时出现过一次 `bring up hci0 failed`（`H5 sync timed out`），板子重启（模块彻底复位）后同一产物跑通——是 RTL8723DS 老坑（§ CLAUDE.md 坑 8），与构建系统无关。
 7. **两套构建并存约定**：make 用 `build/`（中间 .o 平铺其中），CMake 用 `build-cmake/`（中间文件），但**产物都是 `build/bt_speaker`**（RUNTIME_OUTPUT_DIRECTORY 固定，deploy.sh 零改动）。两者产物会互相覆盖，属预期；阶段 4 删 Makefile 后只剩 CMake。
+
+### 9.2 阶段 2+3 实施记录（2026-08-31）
+
+**阶段 2**：`core/player_types.h`（事件 208B）+ `osal/osal.h` + `osal_posix.c`。
+自测 `osal/osal_test.c` 用**自定义 CHECK 宏**而非 `assert()`——Release 下 NDEBUG 会把
+assert 变空操作，导致"变量只被 assert 使用"误报 unused / 检查被静默跳过（实测踩到）。
+host ctest 全过；ARM 交叉 `-Werror` 零警告。并发测试的正确性标准：丢最旧队列下
+消费数 ≤ 生产数是**预期行为**（不能用"收满 3000 才退出"写测试——队列满了丢弃后
+永远收不满，第一版测试就是这么死锁的）。
+
+**阶段 3**（本次 commit）：
+- `services/player_backend.h`：业务接口 + `player_backend_btmg`/`_sim` extern 声明
+- `services/btmg/btmg_player.c`：`src/bt_speaker.c` 全量迁移改造——observer 回调表
+  删除，btmanager 回调里直接组 `player_event_t` 调 `emit()`（btmanager 线程 → 队列）。
+  `alias` 设置拆为 `player_backend_btmg_set_alias()`。行为逻辑（免 PIN/扫描模式/瞬态
+  忽略/deinit 时序）一行未变
+- `apps/app_player.c/.h`：组装层。**队列先于 backend init 创建**（早到事件天然缓冲，
+  原 adapter ON 早于 UI 创建的时序坑从机制上消除；`query_state()` 仍保留兜底）；
+  `lv_timer 33ms` drain → 翻译成 `ui_player_on_*()` 调用
+- `src/ui/ui_main.c`：`bt_on_*` observer + `lv_async_call` 投递通道（~110 行）删除，
+  换成 drain 直调的 6 个 `ui_player_on_*()` 事件入口；按钮改调 `app_player_cmd()`。
+  乐观更新逻辑原样保留
+- `src/bt_speaker.c/.h` 退役（构建已剔除，文件留到阶段4删）
+- Makefile 同步改 MAINSRC（过渡期双构建可用）
+- 新警告处理：btmg 的 track 字段（btmg 内部 char[512]）比事件契约长，snprintf 截断
+  是刻意行为，用 `%.63s` 精度写法消除 `-Wformat-truncation`
+
+**CMake include 布局教训**：新分层目录（core/services/osal）各自 `-I` 一份，头文件
+互相 `#include "xxx.h"` 不带目录前缀——比 `#include "../../core/…"` 干净，但每加
+一层目录 CMakeLists 要同步 `-I`（已记录）。
+
+**板上回归清单**（用户执行）：手机搜到/免 PIN 配对 → 连接显示 → 播放出声 → 歌名/
+歌手/进度/时间刷新 → 三按钮控制 → 音量联动 → 播放图标乐观秒切 → 断连清屏回等待配对。
 
 ---
 

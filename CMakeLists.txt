@@ -34,10 +34,14 @@ target_link_libraries(osal PUBLIC Threads::Threads)
 
 add_executable(bt_speaker
     src/main.c
-    src/bt_speaker.c
-    src/ui/ui_main.c)
+    src/ui/ui_main.c
+    apps/app_player.c
+    services/btmg/btmg_player.c)
 
 target_include_directories(bt_speaker PRIVATE
+    ${PROJECT_SOURCE_DIR}/osal                                 # osal.h
+    ${PROJECT_SOURCE_DIR}/core                                 # player_types.h
+    ${PROJECT_SOURCE_DIR}/services                             # player_backend.h
     ${PROJECT_SOURCE_DIR}/src                                  # lv_conf.h 发现 + 我们的代码
     ${PROJECT_SOURCE_DIR}/third_party                          # lvgl.h / lv_drivers 头
     ${PROJECT_SOURCE_DIR}/third_party/lvgl/src/extra/libs/freetype   # lv_freetype.h（lvgl 树旧 API）

@@ -9,8 +9,8 @@
 #include "lv_drivers/display/sunxifb.h"
 #include "lv_drivers/indev/evdev.h"
 #include "lv_freetype.h"
-#include "bt_speaker.h"
 #include "ui/ui_main.h"
+#include "../apps/app_player.h"
 #include <unistd.h>
 #include <time.h>
 #include <sys/time.h>
@@ -109,15 +109,16 @@ int main(int argc, char *argv[])
 
     ui_main_create();
 
-    /* ===== 蓝牙初始化（在 UI 之后，回调若早到会被 query_state 补发）===== */
-    if (bt_speaker_init(BT_ALIAS, ui_main_bt_observer()) != 0) {
+    /* ===== 蓝牙初始化（在 UI 之后；队列先建，早到事件会缓冲在队列里，
+     * query_state 再兜底补发一次）===== */
+    if (app_player_start(BT_ALIAS) != 0) {
         lv_obj_t *status = lv_label_create(scr);
         lv_obj_set_style_text_font(status, ui_font_cn_22, 0);
         lv_obj_set_style_text_color(status, lv_color_hex(0xE74C3C), 0);
         lv_label_set_text(status, "蓝牙初始化失败");
         lv_obj_align(status, LV_ALIGN_BOTTOM_MID, 0, -120);
     } else {
-        bt_speaker_query_state();   /* adapter 可能已 ON，补发状态到 UI */
+        app_player_query_state();
     }
 
     /* ===== 主循环 ===== */
@@ -126,7 +127,7 @@ int main(int argc, char *argv[])
         usleep((time_till_next > 0 ? time_till_next : 1) * 1000);
     }
 
-    bt_speaker_deinit();
+    app_player_stop();
     lv_ft_font_destroy(ui_font_cn_44);
     lv_ft_font_destroy(ui_font_cn_22);
     sunxifb_exit();

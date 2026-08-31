@@ -17,12 +17,15 @@
  * BT 回调在 btmanager 线程 → lv_async_call 转到 LVGL 线程再操作 UI。
  */
 #include "lvgl/lvgl.h"
-#include "../bt_speaker.h"
+#include "../../apps/app_player.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include <unistd.h>
+
+/* adapter ON 时胶囊下方的别名行（与 main.c 的 BT_ALIAS 一致） */
+#define BT_ALIAS_NAME  "ZGL_BT_SPEAKER"
 
 /* 由 main.c 提供的字体 */
 extern lv_font_t *ui_font_cn_44;
@@ -189,19 +192,18 @@ static void post_play_icon(int play_state)
     lv_async_call(ui_play_icon_cb, (void *)(intptr_t)play_state);
 }
 
-/* ========== bt_speaker 回调（btmanager 线程） ========== */
-static void bt_on_adapter_on(const char *addr, const char *alias)
+/* ========== 事件入口（阶段3：由 apps/app_player.c 的 drain 在 LVGL 线程直调；
+ * 原_observer 回调 + lv_async_call 投递机制已删除，事件经 OSAL 队列过来） ========== */
+
+void ui_player_on_adapter(int on)
 {
-    (void)addr;
-    post_state("等待配对", alias ? alias : "");
+    if (on)
+        post_state("等待配对", BT_ALIAS_NAME);
+    else
+        post_state("蓝牙关闭", "");
 }
 
-static void bt_on_adapter_off(void)
-{
-    post_state("蓝牙关闭", "");
-}
-
-static void bt_on_conn_state(const char *addr, int connected)
+void ui_player_on_conn(const char *addr, int connected)
 {
     g_connected = connected;
     if (connected) {
@@ -217,9 +219,8 @@ static void bt_on_conn_state(const char *addr, int connected)
     }
 }
 
-static void bt_on_play_state(const char *addr, int play_state)
+void ui_player_on_play_state(int play_state)
 {
-    (void)addr;
     /* BTMG: 1=playing 2=paused */
     if (play_state == 1) {
         post_state("播放中", "");
@@ -230,13 +231,12 @@ static void bt_on_play_state(const char *addr, int play_state)
     }
 }
 
-static void bt_on_track(const char *addr, const char *title, const char *artist,
+void ui_player_on_track(const char *title, const char *artist,
                         const char *album, int duration_ms)
 {
-    (void)addr;
     ui_info_t info;
     memset(&info, 0, sizeof(info));
-    snprintf(info.song, sizeof(info.song), "%s", title ? title : "未知歌曲");
+    snprintf(info.song, sizeof(info.song), "%s", title && title[0] ? title : "未知歌曲");
     if (artist && artist[0] && album && album[0])
         snprintf(info.artist_album, sizeof(info.artist_album), "%s - %s", artist, album);
     else if (artist && artist[0])
@@ -251,9 +251,8 @@ static void bt_on_track(const char *addr, const char *title, const char *artist,
     post_info(&info);
 }
 
-static void bt_on_play_pos(const char *addr, int len_ms, int pos_ms)
+void ui_player_on_pos(int len_ms, int pos_ms)
 {
-    (void)addr;
     ui_info_t info;
     memset(&info, 0, sizeof(info));
     info.song[0] = 0;
@@ -264,28 +263,17 @@ static void bt_on_play_pos(const char *addr, int len_ms, int pos_ms)
     post_info(&info);
 }
 
-static void bt_on_volume(const char *addr, unsigned int vol)
+void ui_player_on_volume(int vol)
 {
-    (void)addr;
     ui_info_t info;
     memset(&info, 0, sizeof(info));
     info.song[0] = 0;
     info.artist_album[0] = 0;
     info.pos_ms = -1;
     info.len_ms = -1;
-    info.volume = (int)vol;
+    info.volume = vol;
     post_info(&info);
 }
-
-static bt_speaker_observer_t g_bt_obs = {
-    .on_adapter_on  = bt_on_adapter_on,
-    .on_adapter_off = bt_on_adapter_off,
-    .on_conn_state  = bt_on_conn_state,
-    .on_play_state  = bt_on_play_state,
-    .on_track       = bt_on_track,
-    .on_play_pos    = bt_on_play_pos,
-    .on_volume      = bt_on_volume,
-};
 
 /* ========== 控制按钮（LVGL 线程） ========== */
 static void btn_play_cb(lv_event_t *e)
@@ -299,24 +287,24 @@ static void btn_play_cb(lv_event_t *e)
     if (txt && strcmp(txt, LV_SYMBOL_PAUSE) == 0) {
         lv_label_set_text(g_play_icon, LV_SYMBOL_PLAY);
         g_playing = false;
-        bt_speaker_avrcp_cmd(1);   /* pause */
+        app_player_cmd(PLAYER_CMD_PAUSE);
     } else {
         lv_label_set_text(g_play_icon, LV_SYMBOL_PAUSE);
         g_playing = true;
-        bt_speaker_avrcp_cmd(0);   /* play */
+        app_player_cmd(PLAYER_CMD_PLAY);
     }
 }
 
 static void btn_prev_cb(lv_event_t *e)
 {
     (void)e;
-    if (g_connected) bt_speaker_avrcp_cmd(4);   /* backward */
+    if (g_connected) app_player_cmd(PLAYER_CMD_PREV);
 }
 
 static void btn_next_cb(lv_event_t *e)
 {
     (void)e;
-    if (g_connected) bt_speaker_avrcp_cmd(3);   /* forward */
+    if (g_connected) app_player_cmd(PLAYER_CMD_NEXT);
 }
 
 /* 次级圆钮：玻璃白底 + 白描边 + 深色图标 */
@@ -513,7 +501,4 @@ void ui_main_create(void)
     lv_obj_align(btn_next, LV_ALIGN_TOP_MID, 110, 553);
 }
 
-const bt_speaker_observer_t *ui_main_bt_observer(void)
-{
-    return &g_bt_obs;
-}
+/* 阶段3起无 observer 暴露：事件经 OSAL 队列 → app_player drain → ui_player_on_* */
