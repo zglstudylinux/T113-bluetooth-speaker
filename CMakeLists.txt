@@ -43,14 +43,27 @@ if(_cc_name MATCHES "^(gcc|cc|clang)(-[0-9.]+)?$")
     find_package(Threads REQUIRED)
     target_link_libraries(osal PUBLIC Threads::Threads)
 
+    # sim 后端（可移植层，无 LVGL/BT 依赖）
+    add_library(sim_backend STATIC services/sim/sim_player.c)
+    target_include_directories(sim_backend PUBLIC ${PROJECT_SOURCE_DIR}/services)
+    target_link_libraries(sim_backend PUBLIC osal)
+
     add_executable(osal_test osal/osal_test.c)
     target_include_directories(osal_test PRIVATE
         ${PROJECT_SOURCE_DIR}/osal ${PROJECT_SOURCE_DIR}/core)
     target_link_libraries(osal_test PRIVATE osal)
     target_compile_options(osal_test PRIVATE -Wall -Wextra -Werror)
+
+    add_executable(sim_loop_test tests/sim_loop_test.c)
+    target_include_directories(sim_loop_test PRIVATE
+        ${PROJECT_SOURCE_DIR}/osal ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/services)
+    target_link_libraries(sim_loop_test PRIVATE sim_backend)
+    target_compile_options(sim_loop_test PRIVATE -Wall -Wextra -Werror)
+
     enable_testing()
     add_test(NAME osal_test COMMAND osal_test)
-    message(STATUS "host 编译器：只构建可移植层自测（osal_test）；目标板用交叉 toolchain 文件构建")
+    add_test(NAME sim_loop_test COMMAND sim_loop_test)
+    message(STATUS "host 编译器：只构建可移植层自测（osal_test / sim_loop_test）；目标板用交叉 toolchain 文件构建")
     return()
 endif()
 

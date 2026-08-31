@@ -1,0 +1,53 @@
+# CI 编译门禁（docs/architecture.md §8）
+#
+# build-arm:  真门禁——apt 交叉工具链（armhf 硬浮点，与板上 rootfs 同 ABI）
+#             完整编译 + 链接 vendor ARM 库，断言产物为 32-bit ARM ELF
+# build-host: 可移植层门禁——core/osal/sim 在 host gcc -Werror 下编译，
+#             跑 OSAL 队列自测 + sim 整链路自测（无板无 GUI 无 BT）
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-arm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装交叉工具链
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabihf file
+
+      - name: Configure（gnueabihf toolchain）
+        run: >
+          cmake -B build-ci
+          -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/gnueabihf.cmake
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-ci -j2
+
+      - name: 断言产物为 32-bit ARM hard-float ELF
+        run: |
+          file build/bt_speaker
+          file build/bt_speaker | grep -q "ELF 32-bit.*ARM"
+          echo "OK: 32-bit ARM ELF"
+
+  build-host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure（host，只构建可移植层自测）
+        run: cmake -B build-host -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-host -j2
+
+      - name: 自测（OSAL 队列 + sim 整链路）
+        run: ctest --test-dir build-host --output-on-failure

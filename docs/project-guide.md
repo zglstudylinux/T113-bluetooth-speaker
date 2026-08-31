@@ -614,6 +614,49 @@ AVRCP 协议**拿不到歌词**，只能拿歌名/歌手/专辑/时长/进度/�
 
 ---
 
+### ✅ M6：架构重构 — CMake + UI/业务解耦 + OSAL + GitHub CI（代码完成，待上板回归）
+
+**背景**：M0~M5b 三个源文件（main.c/bt_speaker.c/ui_main.c）三层混在一起——换 UI 主题要动业务投递代码、加业务要动 UI 文件；事件投递靠 `lv_async_call`+malloc 绑死 LVGL/Linux；手工 Makefile 不跟踪头文件依赖（lv_conf.h 坑）；无 CI 门禁。总计划见 `docs/architecture.md`（分层/接口/六阶段路线图/实施记录）。
+
+**新架构**（依赖只向下）：
+
+```
+apps/app_player.c        组装层：建队列 → UI init → btmg 后端 → lv_timer 33ms drain
+   │
+ui/themes/liquidglass/   主题（ui_backend_t）：绘制/唱盘旋转/乐观更新；只认 player_event_t
+   │
+services/btmg + sim/     业务后端（player_backend_t）：btmanager 实现 + 模拟源；不认 LVGL
+   │
+core/player_types.h      唯一数据契约：player_event_t（208B 定长值类型，-1/空串=不更新）
+   │
+osal/                    OS 抽象：队列（满丢最旧）/mutex/time/log；posix 实现，裸机同构预留
+   │
+ports/                   板级：sunxifb / evdev / FreeType / main_linux.c + lv_conf.h
+```
+
+**关键变化**：
+1. **事件机制**：btmanager 线程组 `player_event_t` → OSAL 队列（16 槽，满丢最旧）→ LVGL 线程 33ms timer drain → 主题 `on_event`。替代 `lv_async_call`+malloc 通道（~110 行胶水删除），零堆分配。adapter ON 早于 UI 创建的时序坑从机制上消除（队列先于后端 init 创建，早到事件缓冲）。
+2. **双侧接口**：`player_backend_t`（换业务源）+ `ui_backend_t`（换主题），互不 include。
+3. **构建**：CMake 取代 Makefile（`cmake -B build-cmake -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/openwrt-armhf.cmake && cmake --build build-cmake -j`）；产物仍 `build/bt_speaker`，deploy.sh 零改动；**改 lv_conf.h 自动触发相关重编**（老坑消失）。host 环境只编可移植层自测（vendor ARM .so 在 host 链接必报 wrong format）。
+4. **CI**：`.github/workflows/build.yml` 双 job——`build-arm`（apt gnueabihf 真交叉编译+断言 ARM ELF）+ `build-host`（-Werror 编译 core/osal/sim + ctest 2 项自测）。
+5. **sim 后端**：`services/sim/` 剧本式模拟播放器（晴天/夜曲循环），host 上可跑通整条"业务→队列→drain→UI 事件"链路，是新主题开发数据源。
+
+**踩的坑（新增）**：
+- OpenWrt wrapper gcc 的 `STAGING_DIR` 要**每次编译/链接**注入：toolchain 文件 configure 期 `set(ENV)` 不会带进 build 期，编译步用 `CMAKE_C_COMPILER_LAUNCHER`，链接步没有对应变量要用 `set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK)`。
+- lvgl 静态库自身要 FreeType 头（树内 `lv_freetype.c` include `ft2build.h`）——全局 CFLAGS 换 target 化后必须给 lvgl target 补 include 路径。
+- 产物比 Makefile 小 ~700KB 属预期：Makefile 把全部 .o 直接塞链接，CMake 走静态库按需拉成员，未引用组件（canvas/qrcodegen 等 ~90 符号）被丢弃，行为等价子集。
+- 测试用自定义 CHECK 宏勿用 `assert()`：Release 的 NDEBUG 会把 assert 变空操作，"变量只被 assert 用"误报 unused。
+- 丢最旧队列的测试不能写"收满 N 才退出"（满后丢弃永远收不满→死锁），正确标准是"消费到的完好 + 不卡死 + 抽干后为空"。
+
+**验证状态**：
+- ✅ host：ctest 2/2（OSAL 队列三场景 + sim 整链路）；ARM 交叉构建零警告，产物 1.29MB armhf，旧符号零残留
+- ⏳ **板上回归（用户执行）**：手机搜到/免 PIN 配对 → 连接显示 → 播放出声 → 歌名/歌手/进度/时间刷新 → 三按钮控制 → 音量联动 → 播放图标乐观秒切 → 断连清屏 →（可选）删 bg.png 验证降级 UI
+- ⏳ CI 首跑结果（推送后 GitHub Actions 查看）
+
+**提交**：`baaea4a`（阶段1+2）→ `3e00932`（阶段3）→ `11d3e9e`（阶段4）→ 本次（阶段5）
+
+---
+
 ## 7. 后续里程碑（待做）
 
 - [ ] **M4b**：开机自启（rc.final / init 脚本）+ README 收尾

@@ -378,8 +378,8 @@ jobs:
 | **2** | `core/player_types.h` + `osal/osal.h` + `osal_posix.c`；host 侧队列收发自测程序 | host 上跑通：多线程生产/消费、丢最旧策略正确 | ✅ 2026-08-31 |
 | **3** | 业务迁移：`services/btmg/btmg_player.c`（事件化改造）+ main 改为队列 drain（此阶段 UI 仍用旧文件，drain 后转调现有 UI 更新函数） | **板上全回归**：配对/播放/进度/音量/三按钮/乐观更新/断连清屏 | ✅ 代码完成（板上回归待用户执行） |
 | **4** | UI 迁移：`ui/themes/liquidglass/` + `ports/lv_port_*` + `main_linux.c` 组装；删 `src/` 与 `Makefile` | 板上全回归 + 删 bg.png 验证降级 UI；素材恢复验证主题 UI | ✅ 代码完成（板上回归待用户执行） |
-| **5** | `services/sim/` + host 构建目标 + `.github/workflows/build.yml`；推送触发首次 CI | CI 两 job 全绿；sim 自测通过 | ☐ |
-| **6** | `project-guide.md` 追加架构重构节 + 本文档按实况修订（接口若有出入） | 文档与代码一致 | ☐ |
+| **5** | `services/sim/` + host 构建目标 + `.github/workflows/build.yml`；推送触发首次 CI | CI 两 job 全绿；sim 自测通过 | ✅ 代码完成（CI 首跑结果待推送后确认） |
+| **6** | `project-guide.md` 追加架构重构节 + 本文档按实况修订（接口若有出入） | 文档与代码一致 | ✅ |
 
 > 阶段 3 是风险最高的一步（动事件链路），单独成阶段以便出问题时精确回退。阶段 4 之后仓库才"正式"是新架构；之前 Makefile 一直是可用退路。
 
@@ -454,6 +454,20 @@ host ctest 全过；ARM 交叉 `-Werror` 零警告。并发测试的正确性标
   wrong format）；交叉工具链才定义 bt_speaker。部署 `scripts/deploy.sh` 零改动。
 - 验证：host 构建 3 秒过 osal_test（ctest 绿）；ARM 全量零警告，产物
   1,285,396B ELF armhf，旧符号（`ui_player_on_*`/`bt_speaker_*`）零残留。
+
+### 9.4 阶段 5 实施记录（2026-08-31）
+
+- `services/sim/sim_player.c`：模拟播放器后端（`player_backend_sim`）。独立线程按
+  剧本循环吐事件（adapter ON → 连接 → 曲目 → 音量 → playing → 进度推进 → 演示性
+  暂停 3s → 曲末下一首），`cmd()` 同步改状态机（PLAY/PAUSE/NEXT/PREV）。零 LVGL/BT
+  依赖，是新 UI 主题的开发数据源 + CI 整链路测试数据源。
+- `tests/sim_loop_test.c`：**整链路自测**——sim → emit → OSAL 队列 → drain 线程 →
+  事件序列断言（顺序/字段值/cmd 生效/deinit 干净退出）。host ctest 2/2 绿
+  （osal_test + sim_loop_test，共 ~4s）。
+- `.github/workflows/build.yml` 双 job：`build-arm`（apt gnueabihf 真交叉编译 +
+  `file` 断言 32-bit ARM ELF）+ `build-host`（-Werror 编译可移植层 + ctest）。
+  本机无 apt 工具链，build-arm job 由推送后 CI 首跑验证（链接 vendor 库的符号版本
+  风险预案见 §8）。
 
 ---
 
