@@ -63,15 +63,9 @@ static void disc_timer_cb(lv_timer_t *t)
     lv_img_set_angle(img, (a + step) % 3600);
 }
 
-/* ========== 通用信息更新（歌名/歌手专辑/进度/时间/音量） ========== */
-static void apply_info(const char *song, const char *artist_album,
-                       int pos_ms, int len_ms, int volume)
+/* ========== 通用信息更新（进度/时间/音量） ========== */
+static void apply_info(int pos_ms, int len_ms, int volume)
 {
-    if (song && song[0])
-        lv_label_set_text(g_song_label, song);
-    if (artist_album && artist_album[0])
-        lv_label_set_text(g_artist_label, artist_album);
-
     if (len_ms >= 0) {
         int pct = (len_ms > 0) ? (int)((long long)pos_ms * 100 / len_ms) : 0;
         if (pct < 0) pct = 0;
@@ -90,6 +84,42 @@ static void apply_info(const char *song, const char *artist_album,
         if (v > 127) v = 127;
         lv_bar_set_value(g_vol_bar, v, LV_ANIM_OFF);
         lv_label_set_text_fmt(g_vol_label, "%d", v);
+    }
+}
+
+/* ---- 歌名显示（长名自适应：1 行 / 2 行 / 2 行+省略号）----
+ * 布局约束：进度条 y=500，歌手行 y=444。每次先不限行数测量真实高度，
+ * 再按行数重排（无跨调用状态）：
+ *   单行 → 保持设计稿位置（top=384，视觉中心 420），歌手行正常显示；
+ *   两行 → 整体上移使块中心仍 ≈420，隐藏歌手行（top=444 会撞第二行）；
+ *   三行以上 → 固定两行高度截断 + "…"。 */
+static void apply_song(const char *song)
+{
+    lv_coord_t line_h   = lv_font_get_line_height(g_env.font_large);
+    lv_coord_t line_sp  = lv_obj_get_style_text_line_space(g_song_label, LV_PART_MAIN);
+    lv_coord_t two_h    = line_h * 2 + line_sp;
+    lv_coord_t top_1ln  = 384;                      /* 设计稿单行位置 */
+    lv_coord_t top_2ln  = 420 - two_h / 2;          /* 两行块中心对齐 420 */
+
+    /* 1) 按"不限行数"测量 */
+    lv_obj_set_height(g_song_label, LV_SIZE_CONTENT);
+    lv_label_set_long_mode(g_song_label, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(g_song_label, song);
+    lv_obj_update_layout(g_song_label);
+    lv_coord_t h = lv_obj_get_height(g_song_label);
+
+    /* 2) 按行数重排 */
+    if (h > two_h) {                                /* 3 行以上：截断两行 + … */
+        lv_obj_set_height(g_song_label, two_h);
+        lv_label_set_long_mode(g_song_label, LV_LABEL_LONG_DOT);
+        lv_obj_align(g_song_label, LV_ALIGN_TOP_MID, 0, top_2ln);
+        lv_obj_add_flag(g_artist_label, LV_OBJ_FLAG_HIDDEN);
+    } else if (h > line_h) {                        /* 正好两行 */
+        lv_obj_align(g_song_label, LV_ALIGN_TOP_MID, 0, top_2ln);
+        lv_obj_add_flag(g_artist_label, LV_OBJ_FLAG_HIDDEN);
+    } else {                                        /* 单行 */
+        lv_obj_align(g_song_label, LV_ALIGN_TOP_MID, 0, top_1ln);
+        lv_obj_clear_flag(g_artist_label, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -123,7 +153,10 @@ static void ui_on_event(const player_event_t *ev)
             apply_play_icon(2);
         } else {
             apply_state("等待配对", "");
-            apply_info("—", "", 0, 0, -1);   /* 清空歌曲信息 */
+            apply_song("—");                     /* 清空歌曲信息（恢复单行占位） */
+            lv_label_set_text(g_artist_label, "");
+            lv_bar_set_value(g_bar, 0, LV_ANIM_OFF);
+            lv_label_set_text(g_time_label, "0:00 / 0:00");
             apply_play_icon(2);
         }
         break;
@@ -150,16 +183,25 @@ static void ui_on_event(const player_event_t *ev)
             snprintf(artist_album, sizeof(artist_album), "%s", ev->album);
         else
             snprintf(artist_album, sizeof(artist_album), "未知歌手");
-        apply_info(title, artist_album, 0, ev->len_ms, -1);
+        apply_song(title);
+        lv_label_set_text(g_artist_label, artist_album);
+        if (ev->len_ms >= 0) {
+            lv_bar_set_value(g_bar, 0, LV_ANIM_OFF);
+            char cur[16], total[16], t[40];
+            fmt_time(cur, sizeof(cur), 0);
+            fmt_time(total, sizeof(total), ev->len_ms);
+            snprintf(t, sizeof(t), "%s / %s", cur, total);
+            lv_label_set_text(g_time_label, t);
+        }
         break;
     }
 
     case PLAYER_EVT_POS:
-        apply_info(NULL, NULL, ev->pos_ms, ev->len_ms, -1);
+        apply_info(ev->pos_ms, ev->len_ms, -1);
         break;
 
     case PLAYER_EVT_VOL:
-        apply_info(NULL, NULL, -1, -1, ev->volume);
+        apply_info(-1, -1, ev->volume);
         break;
 
     default:
@@ -190,13 +232,24 @@ static void btn_play_cb(lv_event_t *e)
 static void btn_prev_cb(lv_event_t *e)
 {
     (void)e;
-    if (g_connected) g_env.cmd_request(PLAYER_CMD_PREV);
+    if (!g_connected) return;
+    /* 暂停态切歌，手机会恢复播放——乐观更新图标（同 btn_play_cb），不等 AVRCP 回调 */
+    if (!g_playing) {
+        g_playing = true;
+        lv_label_set_text(g_play_icon, LV_SYMBOL_PAUSE);
+    }
+    g_env.cmd_request(PLAYER_CMD_PREV);
 }
 
 static void btn_next_cb(lv_event_t *e)
 {
     (void)e;
-    if (g_connected) g_env.cmd_request(PLAYER_CMD_NEXT);
+    if (!g_connected) return;
+    if (!g_playing) {
+        g_playing = true;
+        lv_label_set_text(g_play_icon, LV_SYMBOL_PAUSE);
+    }
+    g_env.cmd_request(PLAYER_CMD_NEXT);
 }
 
 /* 次级圆钮：玻璃白底 + 白描边 + 深色图标 */
