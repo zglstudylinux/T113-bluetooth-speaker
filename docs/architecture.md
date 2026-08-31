@@ -377,7 +377,7 @@ jobs:
 | **1** | CMake 骨架：顶层 + lvgl/lv_drivers 收集 + 2 个 toolchain 文件；**源码不动**，仍编 src/ 三件套 | 本机 cmake 编出 ELF 与 Makefile 产物等价（`file`/大小/`nm` 关键符号比对）；deploy 上板跑通无回归 | ✅ 2026-08-31（见下方实施记录） |
 | **2** | `core/player_types.h` + `osal/osal.h` + `osal_posix.c`；host 侧队列收发自测程序 | host 上跑通：多线程生产/消费、丢最旧策略正确 | ✅ 2026-08-31 |
 | **3** | 业务迁移：`services/btmg/btmg_player.c`（事件化改造）+ main 改为队列 drain（此阶段 UI 仍用旧文件，drain 后转调现有 UI 更新函数） | **板上全回归**：配对/播放/进度/音量/三按钮/乐观更新/断连清屏 | ✅ 代码完成（板上回归待用户执行） |
-| **4** | UI 迁移：`ui/themes/liquidglass/` + `ports/lv_port_*` + `main_linux.c` 组装；删 `src/` 与 `Makefile` | 板上全回归 + 删 bg.png 验证降级 UI；素材恢复验证主题 UI | ☐ |
+| **4** | UI 迁移：`ui/themes/liquidglass/` + `ports/lv_port_*` + `main_linux.c` 组装；删 `src/` 与 `Makefile` | 板上全回归 + 删 bg.png 验证降级 UI；素材恢复验证主题 UI | ✅ 代码完成（板上回归待用户执行） |
 | **5** | `services/sim/` + host 构建目标 + `.github/workflows/build.yml`；推送触发首次 CI | CI 两 job 全绿；sim 自测通过 | ☐ |
 | **6** | `project-guide.md` 追加架构重构节 + 本文档按实况修订（接口若有出入） | 文档与代码一致 | ☐ |
 
@@ -434,6 +434,26 @@ host ctest 全过；ARM 交叉 `-Werror` 零警告。并发测试的正确性标
 
 **板上回归清单**（用户执行）：手机搜到/免 PIN 配对 → 连接显示 → 播放出声 → 歌名/
 歌手/进度/时间刷新 → 三按钮控制 → 音量联动 → 播放图标乐观秒切 → 断连清屏回等待配对。
+
+### 9.3 阶段 4 实施记录（2026-08-31）
+
+- `ui/ui_backend.h` 定稿：`ui_env_t`（scr/font_large/font_small/cmd_request 注入）+
+  `init/on_event/deinit` 三函数。主题不建字体不发命令、只认 `player_event_t`。
+- `ui/themes/liquidglass/`：`theme.h`（色板/素材路径/布局常量）+ `ui_liquidglass.c`
+  （原 ui_main.c 绘制/旋转/乐观更新逻辑零改动迁移；`ui_info_t` 三通道合并为
+  `on_event` 单入口，事件已在 UI 线程直接 apply）。
+- `ports/`：`lv_port_disp.c`（fb）/ `lv_port_indev.c`（evdev）/ `lv_port_font.c`
+  （FreeType 44/22 两号）+ `main_linux.c`（组装 + 主循环）。**`lv_conf.h` 移到
+  `ports/`**——include 路径同步改，`__has_include` 发现机制不变。
+- `src/` 整目录删除（含退役的 bt_speaker.c/.h）；**Makefile 删除**，构建只剩 CMake。
+- `apps/app_player.c` 定稿：`app_player_start(alias, ui, env)` 一站式组装
+  （队列 → UI init → backend init → drain timer）；阶段3 的临时翻译层
+  （`ui_player_on_*` 6 个函数）随旧 UI 文件删除。
+- CMake 定稿 host/ARM 分离：host 编译器（裸名 gcc/cc/clang）**只编 osal_test 并
+  return()**（含 lvgl 在内的主程序目标不定义——host 链 vendor ARM .so 必报
+  wrong format）；交叉工具链才定义 bt_speaker。部署 `scripts/deploy.sh` 零改动。
+- 验证：host 构建 3 秒过 osal_test（ctest 绿）；ARM 全量零警告，产物
+  1,285,396B ELF armhf，旧符号（`ui_player_on_*`/`bt_speaker_*`）零残留。
 
 ---
 

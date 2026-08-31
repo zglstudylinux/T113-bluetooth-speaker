@@ -1,65 +1,25 @@
 /*
- * ui_main.c — 蓝牙音箱主界面（480x640 竖屏）· 深空玻璃主题
+ * ui_liquidglass.c — D1 液态玻璃主题（ui_backend_t 实现）
  *
- * 设计（assets/design/mockup_midnight.png，生成器 scripts/gen_design.py）：
- *   静态视觉全部烘进背景图 bg.png（深蓝黑渐变 + 光晕 + 玻璃卡片 + 均衡器条），
- *   LVGL 只画动态元素：
- *     顶栏      蓝牙符文+标题（cn_22） | 状态胶囊（圆点+状态字）
- *     玻璃卡片   唱盘 disc.png（播放时 12s/圈 慢转）叠在卡片中央
- *     曲目区    歌名（cn_44）+ 歌手专辑（cn_22）
- *     进度条    滑条样式 bar（含 knob），左右时间
- *     控制区    上一首 / 播放暂停（大，青色发光）/ 下一首，右侧竖音量条
+ * 由 src/ui/ui_main.c 迁移：绘制/布局/唱盘旋转/乐观更新逻辑原样保留，
+ * 事件侧从"post_* 投递通道"改为 drain 直调的 on_event（player_event_t 已在
+ * UI 线程，栈上直接用）。依赖注入：字体经 ui_env_t，发命令经 env->cmd_request。
  *
- * 素材从 POSIX FS 加载（LV_FS_POSIX_LETTER 'S'），deploy.sh 推到
- * /mnt/UDISK/speaker/image/。背景缺失时降级为纯深色底（布局不变，
- * 只是少了渐变/卡片；唱盘缺失时隐藏盘体）。
- *
- * BT 回调在 btmanager 线程 → lv_async_call 转到 LVGL 线程再操作 UI。
+ * 设计（assets/design/mockup2_liquidglass.png，生成器 scripts/gen_design.py --v2）：
+ *   静态视觉烘进 bg.png（浅银白渐变+玻璃折射圆+玻璃卡片），LVGL 只画动态元素。
+ *   素材缺失时降级纯浅色底（布局不变）；disc.png 缺失时隐藏盘体。
  */
 #include "lvgl/lvgl.h"
-#include "../../apps/app_player.h"
+#include "ui_backend.h"
+#include "theme.h"
+
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include <unistd.h>
 
-/* adapter ON 时胶囊下方的别名行（与 main.c 的 BT_ALIAS 一致） */
-#define BT_ALIAS_NAME  "ZGL_BT_SPEAKER"
-
-/* 由 main.c 提供的字体 */
-extern lv_font_t *ui_font_cn_44;
-extern lv_font_t *ui_font_cn_22;
-
 /* 小号字体用 LVGL 内置 Montserrat（lv_conf.h 已开 12/14/16），数字/符号够用 */
 #define UI_FONT_NUM   (&lv_font_montserrat_14)
-
-/* ---------- 主题色（D1 液态玻璃：浅银白底 + 深色文字 + iOS 蓝） ---------- */
-#define COL_BG        0xE8ECF2   /* 降级底色（无背景图时） */
-#define COL_TITLE     0x26303C
-#define COL_SONG      0x182030
-#define COL_ARTIST    0x606C80
-#define COL_SUB       0x8C98AA
-#define COL_ACCENT    0x0A84FF   /* iOS 蓝 */
-#define COL_PLAY_BG   0x1C202C   /* 播放大圆钮：近黑（玻璃上的深色锚点） */
-#define COL_PLAY_ICO  0xFFFFFF
-#define COL_SIDE_BG   0xFFFFFF   /* 前后曲玻璃白圆钮 */
-#define COL_SIDE_ICO  0x303A4C
-#define COL_PILL_BG   0xFFFFFF   /* 状态胶囊 */
-#define COL_PILL_TXT  0x303A4C
-
-/* 图片资源路径：deploy.sh 推到 /mnt/UDISK/speaker/image/ */
-#define IMG_BG_FILE   "/mnt/UDISK/speaker/image/bg.png"
-#define IMG_BG_PATH   "S:" IMG_BG_FILE
-#define IMG_DISC_FILE "/mnt/UDISK/speaker/image/disc.png"
-#define IMG_DISC_PATH "S:" IMG_DISC_FILE
-
-/* 布局常量（与设计稿一致，单位 px） */
-#define DISC_CX       240
-#define DISC_CY       226
-#define DISC_SIZE     184
-#define DISC_TICK_MS  33        /* 旋转定时器周期 ~30fps */
-#define DISC_SPIN_MS  30000     /* 播放时唱盘一圈周期（缓慢优雅） */
 
 /* ========== UI 对象 ========== */
 static lv_obj_t *g_status_label;    /* 状态字：等待配对/已连接/播放中/已暂停 */
@@ -77,6 +37,9 @@ static lv_obj_t *g_disc;            /* 唱盘图片（旋转） */
 /* 运行态 */
 static volatile bool g_connected = false;
 static bool g_playing = false;      /* 唱盘是否在转 */
+
+/* 组装层注入的运行环境（init 时保存） */
+static ui_env_t g_env;
 
 /* ========== 时间格式化 ========== */
 static void fmt_time(char *buf, size_t len, int ms)
@@ -100,179 +63,108 @@ static void disc_timer_cb(lv_timer_t *t)
     lv_img_set_angle(img, (a + step) % 3600);
 }
 
-/* ========== lv_async_call 载体 ========== */
-
-/* 通用信息更新（歌名/歌手专辑/进度/时间/音量） */
-typedef struct {
-    char song[96];
-    char artist_album[96];
-    int  pos_ms;
-    int  len_ms;
-    int  volume;     /* -1 = 不更新 */
-} ui_info_t;
-
-/* 状态/连接更新 */
-typedef struct {
-    char status[48];
-    char sub[64];     /* 对端地址或别名 */
-} ui_state_t;
-
-static void ui_info_cb(void *p)
+/* ========== 通用信息更新（歌名/歌手专辑/进度/时间/音量） ========== */
+static void apply_info(const char *song, const char *artist_album,
+                       int pos_ms, int len_ms, int volume)
 {
-    ui_info_t *m = (ui_info_t *)p;
-    if (!m) return;
+    if (song && song[0])
+        lv_label_set_text(g_song_label, song);
+    if (artist_album && artist_album[0])
+        lv_label_set_text(g_artist_label, artist_album);
 
-    if (m->song[0])
-        lv_label_set_text(g_song_label, m->song);
-    if (m->artist_album[0])
-        lv_label_set_text(g_artist_label, m->artist_album);
-
-    if (m->len_ms >= 0) {
-        int pct = (m->len_ms > 0)
-                  ? (int)((long long)m->pos_ms * 100 / m->len_ms)
-                  : 0;
+    if (len_ms >= 0) {
+        int pct = (len_ms > 0) ? (int)((long long)pos_ms * 100 / len_ms) : 0;
         if (pct < 0) pct = 0;
         if (pct > 100) pct = 100;
         lv_bar_set_value(g_bar, pct, LV_ANIM_OFF);
 
         char cur[16], total[16], t[40];
-        fmt_time(cur, sizeof(cur), m->pos_ms);
-        fmt_time(total, sizeof(total), m->len_ms);
+        fmt_time(cur, sizeof(cur), pos_ms);
+        fmt_time(total, sizeof(total), len_ms);
         snprintf(t, sizeof(t), "%s / %s", cur, total);
         lv_label_set_text(g_time_label, t);
     }
 
-    if (m->volume >= 0) {
-        int v = m->volume;
+    if (volume >= 0) {
+        int v = volume;
         if (v > 127) v = 127;
         lv_bar_set_value(g_vol_bar, v, LV_ANIM_OFF);
         lv_label_set_text_fmt(g_vol_label, "%d", v);
     }
-
-    free(m);
 }
 
-static void ui_state_cb(void *p)
+static void apply_state(const char *status, const char *sub)
 {
-    ui_state_t *m = (ui_state_t *)p;
-    if (!m) return;
-    lv_label_set_text(g_status_label, m->status);
-    lv_label_set_text(g_addr_label, m->sub);
-    free(m);
+    lv_label_set_text(g_status_label, status);
+    lv_label_set_text(g_addr_label, sub);
 }
 
-/* 播放/暂停 → 图标 + 唱盘转停 */
-static void ui_play_icon_cb(void *p)
+static void apply_play_icon(int play_state)
 {
-    int st = (int)(intptr_t)p;
-    g_playing = (st == 1);
+    g_playing = (play_state == 1);
     lv_label_set_text(g_play_icon, g_playing ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
 }
 
-/* ========== 线程安全投递 ========== */
-static void post_info(const ui_info_t *info)
+/* ========== on_event：drain 在 LVGL 线程直调 ========== */
+static void ui_on_event(const player_event_t *ev)
 {
-    ui_info_t *m = malloc(sizeof(ui_info_t));
-    if (!m) return;
-    *m = *info;
-    lv_async_call(ui_info_cb, m);
-}
+    switch (ev->type) {
+    case PLAYER_EVT_ADAPTER:
+        if (ev->on == 1)
+            apply_state("等待配对", THEME_BT_ALIAS);
+        else
+            apply_state("蓝牙关闭", "");
+        break;
 
-static void post_state(const char *status, const char *sub)
-{
-    ui_state_t *m = malloc(sizeof(ui_state_t));
-    if (!m) return;
-    snprintf(m->status, sizeof(m->status), "%s", status);
-    snprintf(m->sub, sizeof(m->sub), "%s", sub);
-    lv_async_call(ui_state_cb, m);
-}
+    case PLAYER_EVT_CONN:
+        g_connected = (ev->connected == 1);
+        if (g_connected) {
+            apply_state("已连接", ev->addr);
+            apply_play_icon(2);
+        } else {
+            apply_state("等待配对", "");
+            apply_info("—", "", 0, 0, -1);   /* 清空歌曲信息 */
+            apply_play_icon(2);
+        }
+        break;
 
-static void post_play_icon(int play_state)
-{
-    lv_async_call(ui_play_icon_cb, (void *)(intptr_t)play_state);
-}
+    case PLAYER_EVT_PLAY_STATE:
+        /* BTMG: 1=playing 2=paused */
+        if (ev->play_state == 1) {
+            apply_state("播放中", "");
+            apply_play_icon(1);
+        } else if (ev->play_state == 2) {
+            apply_state("已暂停", "");
+            apply_play_icon(2);
+        }
+        break;
 
-/* ========== 事件入口（阶段3：由 apps/app_player.c 的 drain 在 LVGL 线程直调；
- * 原_observer 回调 + lv_async_call 投递机制已删除，事件经 OSAL 队列过来） ========== */
-
-void ui_player_on_adapter(int on)
-{
-    if (on)
-        post_state("等待配对", BT_ALIAS_NAME);
-    else
-        post_state("蓝牙关闭", "");
-}
-
-void ui_player_on_conn(const char *addr, int connected)
-{
-    g_connected = connected;
-    if (connected) {
-        post_state("已连接", addr ? addr : "");
-        post_play_icon(2);
-    } else {
-        post_state("等待配对", "");
-        /* 断开后清空歌曲信息 */
-        ui_info_t info = { .song = "—", .artist_album = "",
-                           .pos_ms = 0, .len_ms = 0, .volume = -1 };
-        post_info(&info);
-        post_play_icon(2);
+    case PLAYER_EVT_TRACK: {
+        const char *title = ev->title[0] ? ev->title : "未知歌曲";
+        char artist_album[sizeof(ev->artist) + sizeof(ev->album) + 4];
+        if (ev->artist[0] && ev->album[0])
+            snprintf(artist_album, sizeof(artist_album), "%s - %s", ev->artist, ev->album);
+        else if (ev->artist[0])
+            snprintf(artist_album, sizeof(artist_album), "%s", ev->artist);
+        else if (ev->album[0])
+            snprintf(artist_album, sizeof(artist_album), "%s", ev->album);
+        else
+            snprintf(artist_album, sizeof(artist_album), "未知歌手");
+        apply_info(title, artist_album, 0, ev->len_ms, -1);
+        break;
     }
-}
 
-void ui_player_on_play_state(int play_state)
-{
-    /* BTMG: 1=playing 2=paused */
-    if (play_state == 1) {
-        post_state("播放中", "");
-        post_play_icon(1);
-    } else if (play_state == 2) {
-        post_state("已暂停", "");
-        post_play_icon(2);
+    case PLAYER_EVT_POS:
+        apply_info(NULL, NULL, ev->pos_ms, ev->len_ms, -1);
+        break;
+
+    case PLAYER_EVT_VOL:
+        apply_info(NULL, NULL, -1, -1, ev->volume);
+        break;
+
+    default:
+        break;
     }
-}
-
-void ui_player_on_track(const char *title, const char *artist,
-                        const char *album, int duration_ms)
-{
-    ui_info_t info;
-    memset(&info, 0, sizeof(info));
-    snprintf(info.song, sizeof(info.song), "%s", title && title[0] ? title : "未知歌曲");
-    if (artist && artist[0] && album && album[0])
-        snprintf(info.artist_album, sizeof(info.artist_album), "%s - %s", artist, album);
-    else if (artist && artist[0])
-        snprintf(info.artist_album, sizeof(info.artist_album), "%s", artist);
-    else if (album && album[0])
-        snprintf(info.artist_album, sizeof(info.artist_album), "%s", album);
-    else
-        snprintf(info.artist_album, sizeof(info.artist_album), "未知歌手");
-    info.pos_ms = 0;
-    info.len_ms = duration_ms;
-    info.volume = -1;
-    post_info(&info);
-}
-
-void ui_player_on_pos(int len_ms, int pos_ms)
-{
-    ui_info_t info;
-    memset(&info, 0, sizeof(info));
-    info.song[0] = 0;
-    info.artist_album[0] = 0;
-    info.pos_ms = pos_ms;
-    info.len_ms = len_ms;
-    info.volume = -1;
-    post_info(&info);
-}
-
-void ui_player_on_volume(int vol)
-{
-    ui_info_t info;
-    memset(&info, 0, sizeof(info));
-    info.song[0] = 0;
-    info.artist_album[0] = 0;
-    info.pos_ms = -1;
-    info.len_ms = -1;
-    info.volume = vol;
-    post_info(&info);
 }
 
 /* ========== 控制按钮（LVGL 线程） ========== */
@@ -287,24 +179,24 @@ static void btn_play_cb(lv_event_t *e)
     if (txt && strcmp(txt, LV_SYMBOL_PAUSE) == 0) {
         lv_label_set_text(g_play_icon, LV_SYMBOL_PLAY);
         g_playing = false;
-        app_player_cmd(PLAYER_CMD_PAUSE);
+        g_env.cmd_request(PLAYER_CMD_PAUSE);
     } else {
         lv_label_set_text(g_play_icon, LV_SYMBOL_PAUSE);
         g_playing = true;
-        app_player_cmd(PLAYER_CMD_PLAY);
+        g_env.cmd_request(PLAYER_CMD_PLAY);
     }
 }
 
 static void btn_prev_cb(lv_event_t *e)
 {
     (void)e;
-    if (g_connected) app_player_cmd(PLAYER_CMD_PREV);
+    if (g_connected) g_env.cmd_request(PLAYER_CMD_PREV);
 }
 
 static void btn_next_cb(lv_event_t *e)
 {
     (void)e;
-    if (g_connected) app_player_cmd(PLAYER_CMD_NEXT);
+    if (g_connected) g_env.cmd_request(PLAYER_CMD_NEXT);
 }
 
 /* 次级圆钮：玻璃白底 + 白描边 + 深色图标 */
@@ -332,10 +224,11 @@ static lv_obj_t *create_ctrl_btn(lv_obj_t *parent, const void *symbol,
     return btn;
 }
 
-/* ========== 界面构建（LVGL 线程，main.c 调用） ========== */
-void ui_main_create(void)
+/* ========== 界面构建（LVGL 线程，组装层经 init 调用） ========== */
+static int ui_init(const ui_env_t *env)
 {
-    lv_obj_t *scr = lv_scr_act();
+    g_env = *env;
+    lv_obj_t *scr = env->scr;
     lv_obj_set_style_bg_color(scr, lv_color_hex(COL_BG), 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -358,7 +251,7 @@ void ui_main_create(void)
         lv_obj_align(g_disc, LV_ALIGN_TOP_MID, 0, DISC_CY - DISC_SIZE / 2);
         /* 旋转以图片中心为轴 */
         lv_img_set_pivot(g_disc, DISC_SIZE / 2, DISC_SIZE / 2);
-        lv_timer_create(disc_timer_cb, 33, g_disc);   /* ~30fps 递增角度 */
+        lv_timer_create(disc_timer_cb, DISC_TICK_MS, g_disc);   /* ~30fps 递增角度 */
     }
 
     /* ---- 顶栏：蓝牙符文 + 标题 ---- */
@@ -369,7 +262,7 @@ void ui_main_create(void)
     lv_obj_align(bt_sym, LV_ALIGN_TOP_LEFT, 20, 32);
 
     lv_obj_t *title = lv_label_create(scr);
-    lv_obj_set_style_text_font(title, ui_font_cn_22, 0);
+    lv_obj_set_style_text_font(title, env->font_small, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(COL_TITLE), 0);
     lv_label_set_text(title, "蓝牙音箱");
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 44, 31);
@@ -400,7 +293,7 @@ void ui_main_create(void)
     lv_obj_align(g_status_dot, LV_ALIGN_LEFT_MID, 12, 0);
 
     g_status_label = lv_label_create(pill);
-    lv_obj_set_style_text_font(g_status_label, ui_font_cn_22, 0);
+    lv_obj_set_style_text_font(g_status_label, env->font_small, 0);
     lv_obj_set_style_text_color(g_status_label, lv_color_hex(COL_PILL_TXT), 0);
     lv_label_set_text(g_status_label, "初始化");
     lv_obj_align(g_status_label, LV_ALIGN_LEFT_MID, 26, 1);
@@ -414,7 +307,7 @@ void ui_main_create(void)
 
     /* ---- 歌名（大字，长歌名换行） ---- */
     g_song_label = lv_label_create(scr);
-    lv_obj_set_style_text_font(g_song_label, ui_font_cn_44, 0);
+    lv_obj_set_style_text_font(g_song_label, env->font_large, 0);
     lv_obj_set_style_text_color(g_song_label, lv_color_hex(COL_SONG), 0);
     lv_obj_set_width(g_song_label, 440);
     lv_label_set_long_mode(g_song_label, LV_LABEL_LONG_WRAP);
@@ -426,7 +319,7 @@ void ui_main_create(void)
 
     /* ---- "歌手 - 专辑" ---- */
     g_artist_label = lv_label_create(scr);
-    lv_obj_set_style_text_font(g_artist_label, ui_font_cn_22, 0);
+    lv_obj_set_style_text_font(g_artist_label, env->font_small, 0);
     lv_obj_set_style_text_color(g_artist_label, lv_color_hex(COL_ARTIST), 0);
     lv_obj_set_width(g_artist_label, 440);
     lv_label_set_long_mode(g_artist_label, LV_LABEL_LONG_DOT);
@@ -435,7 +328,7 @@ void ui_main_create(void)
     /* 22px 行高 ~32，字形中心偏移 ~18 → top=444 使视觉中心 ≈ 462（同设计稿） */
     lv_obj_align(g_artist_label, LV_ALIGN_TOP_MID, 0, 444);
 
-    /* ---- 进度条（胶囊形，带 knob） ---- */
+    /* ---- 进度条（胶囊形） ---- */
     g_bar = lv_bar_create(scr);
     lv_obj_set_size(g_bar, 304, 6);
     lv_bar_set_range(g_bar, 0, 100);
@@ -446,9 +339,6 @@ void ui_main_create(void)
     lv_obj_set_style_radius(g_bar, 3, 0);
     lv_obj_set_style_radius(g_bar, 3, LV_PART_INDICATOR);
     lv_obj_align(g_bar, LV_ALIGN_TOP_MID, -28, 500);
-
-    /* knob（进度圆点；lv_bar 无内置 knob，用小 obj 跟随——先放静态简化版：
-     * 因为 8px 圆点视觉弱，改为加亮 indicator 本身，knob 省略，与稿子差异极小） */
 
     /* ---- 时间 ---- */
     g_time_label = lv_label_create(scr);
@@ -499,6 +389,19 @@ void ui_main_create(void)
 
     lv_obj_t *btn_next = create_ctrl_btn(scr, LV_SYMBOL_NEXT, 58, btn_next_cb);
     lv_obj_align(btn_next, LV_ALIGN_TOP_MID, 110, 553);
+
+    return 0;
 }
 
-/* 阶段3起无 observer 暴露：事件经 OSAL 队列 → app_player drain → ui_player_on_* */
+static void ui_deinit(void)
+{
+    /* LVGL 对象随 scr 销毁；这里只停运行态 */
+    g_playing = false;
+    g_connected = false;
+}
+
+const ui_backend_t ui_backend_liquidglass = {
+    .init     = ui_init,
+    .on_event = ui_on_event,
+    .deinit   = ui_deinit,
+};

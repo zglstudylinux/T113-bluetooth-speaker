@@ -18,9 +18,9 @@ target_include_directories(lvgl SYSTEM PUBLIC
     ${PROJECT_SOURCE_DIR}/third_party            # lvgl.h 在 third_party/lvgl/…，源码里 #include "lvgl/lvgl.h"
 )
 # lv_conf.h 发现机制：lvgl 的 lv_conf_internal.h 用 __has_include("lv_conf.h")，
-# src/ 在 include 路径里即可命中（与旧 Makefile 的 -I src 等价）
+# ports/（lv_conf.h 所在）在 include 路径里即可命中
 target_include_directories(lvgl SYSTEM PUBLIC
-    ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/ports
     ${PROJECT_SOURCE_DIR}/third_party/lvgl/src/extra/libs/freetype   # lv_freetype.c 需要同目录头
     ${PROJECT_SOURCE_DIR}/third_party/freetype/include)              # ft2build.h（lv_freetype.c 用）
 
