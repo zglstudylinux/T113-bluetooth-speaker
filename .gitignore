@@ -1,16 +1,20 @@
 # 交叉编译工具链（由 scripts/setup.sh 从 SDK 复制）
-toolchain/
+# 前导 / 限定只匹配仓库根——否则会连带忽略 cmake/toolchain/ 下的 CMake 工具链文件
+/toolchain/
 
 # 构建产物
 build/
 *.o
 src/main.c.bak
 
+# CMake 中间目录
+build-cmake/
+build-host/
+build-ci/
+CMakeLists.txt.user
+CMakeUserPresets.json
+
 # 编辑器
 .vscode/
 .idea/
 *.swp
-build-cmake/
-CMakeLists.txt.user
-CMakeUserPresets.json
-build-host/
