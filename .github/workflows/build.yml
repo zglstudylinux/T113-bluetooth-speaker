@@ -24,9 +24,10 @@ jobs:
           sudo apt-get install -y gcc-arm-linux-gnueabihf file
 
       - name: Configure（gnueabihf toolchain）
+        # 工具链文件须给绝对路径：toolchain 在 project() 前处理，相对路径相对 build 目录解析
         run: >
           cmake -B build-ci
-          -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/gnueabihf.cmake
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/gnueabihf.cmake
           -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
