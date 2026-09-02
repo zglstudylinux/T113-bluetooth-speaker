@@ -5,7 +5,7 @@
  * 事件侧从"post_* 投递通道"改为 drain 直调的 on_event（player_event_t 已在
  * UI 线程，栈上直接用）。依赖注入：字体经 ui_env_t，发命令经 env->cmd_request。
  *
- * 设计（assets/design/mockup2_liquidglass.png，生成器 scripts/gen_design.py --v2）：
+ * 设计（docs/design/mockup2_liquidglass.png，生成器 scripts/gen_design.py --v2）：
  *   静态视觉烘进 bg.png（浅银白渐变+玻璃折射圆+玻璃卡片），LVGL 只画动态元素。
  *   素材缺失时降级纯浅色底（布局不变）；disc.png 缺失时隐藏盘体。
  */

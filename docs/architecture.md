@@ -217,40 +217,37 @@ btmg avrcp_audio_volume_cb          │
 
 ## 6. 目录树与迁移映射
 
+> M9 起源码收编进 `src/`（`services/btmg|sim`、`ui/themes/liquidglass` 压平；
+> `cmake/toolchain/` 压平到 `cmake/`）。以下为当前实际布局：
+
 ```
 .
-├── CMakeLists.txt                      # 顶层：选项 + add_subdirectory
-├── Makefile                            # 【过渡期保留】阶段 4 验证等价后删除
+├── CMakeLists.txt                      # 顶层：host/ARM 分流 + add_subdirectory
+├── build.sh                            # 一键构建入口（arm / -host / -clean）
 ├── cmake/
-│   ├── toolchain/openwrt-armhf.cmake   # 本机 ./toolchain（STAGING_DIR 在此 export）
-│   ├── toolchain/gnueabihf.cmake       # CI 用 apt 交叉工具链
-│   ├── lvgl.cmake / lv_drivers.cmake   # vendor 源码收集成 static lib（见 §7）
-│   └── sim.cmake                       # host 自测可执行（core+osal+sim）
-├── core/
-│   └── player_types.h
-├── osal/
-│   ├── osal.h
-│   └── osal_posix.c
-├── services/
-│   ├── player_backend.h
-│   ├── btmg/btmg_player.c              # ← src/bt_speaker.c 迁移（接口化）
-│   └── sim/sim_player.c                # 新增：定时吐假事件（晴天/周杰伦…）
-├── ui/
-│   ├── ui_backend.h
-│   ├── ui_core/ui_env.c                # drain timer 注册等公共小件（如需要）
-│   └── themes/
-│       └── liquidglass/
-│           ├── theme.h                 # 主题色宏（从 ui_main.c 拆出）
-│           └── ui_liquidglass.c        # ← src/ui/ui_main.c 的绘制部分迁移
-├── ports/
-│   ├── lv_port_disp_fb.c               # ← src/main.c 的 sunxifb 初始化拆出
-│   ├── lv_port_indev_evdev.c           # ← evdev 初始化拆出
-│   ├── lv_port_font_freetype.c         # ← FreeType 加载拆出（产出 ui_env 的字体）
-│   └── main_linux.c                    # ← src/main.c 的 main()：组装 + 主循环 + drain
-├── src/                                # 【过渡期保留】阶段 4 后删除
+│   ├── openwrt-armhf.cmake             # 本机 ./toolchain（STAGING_DIR 注入）
+│   ├── gnueabihf.cmake                 # CI 用 apt 交叉工具链
+│   └── third_party.cmake               # vendor 源码/库收集（lvgl/lv_drivers/freetype/bt）
+├── src/
+│   ├── core/player_types.h
+│   ├── osal/{osal.h,osal_posix.c}
+│   ├── services/
+│   │   ├── player_backend.h
+│   │   ├── btmg_player.c               # ← 原 src/bt_speaker.c 迁移（接口化）
+│   │   └── sim_player.c                # 模拟数据源（host/CI 用）
+│   ├── ui/
+│   │   ├── ui_backend.h
+│   │   ├── theme.h                     # 主题色宏/素材/布局常量
+│   │   └── ui_liquidglass.c            # D1 液态玻璃主题
+│   ├── ports/
+│   │   ├── lv_port_disp.c / lv_port_indev.c / lv_port_font.c
+│   │   ├── main_linux.c                # 组装 + 主循环 + drain
+│   │   └── lv_conf.h                   # lvgl __has_include 发现（include 路径里有 src/ports）
+│   ├── apps/app_player.c               # 组装层（队列 → UI init → backend init → drain）
+│   └── tests/{osal_test.c,sim_loop_test.c}
 ├── third_party/                        # vendor 不动
-├── scripts/                            # setup.sh / deploy.sh 不动（产物路径不变）
-└── .github/workflows/build.yml         # 阶段 5 新增
+├── scripts/                            # setup.sh / deploy.sh（产物路径不变）
+└── .github/workflows/build.yml
 ```
 
 迁移映射速查：

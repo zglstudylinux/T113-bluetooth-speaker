@@ -41,44 +41,48 @@ Tina SDK 默认工具链 `arm-linux-gnueabi`（linaro 5.3.1）是**软浮点**�
 
 ## 1. 项目结构总览
 
+### 当前结构（M9 起：源码统一收在 src/）
+
 ```
 T113-bluetooth-speaker/
-├── Makefile                  # 交叉编译入口（见 §2）
+├── build.sh                  # 一键构建入口（arm / -host / -clean）
 ├── README.md
 ├── CLAUDE.md                 # 给 Claude Code 的仓库操作指南
-├── .gitignore                # 排除 toolchain/ build/
-├── docs/                     # 本文档 + 截图
-│   └── project-guide.md
-├── firmware/
-│   └── rtl8723ds/           # 实测好的 BT 固件集（fw/config/rtk_hciattach + md5）
-├── scripts/
-│   ├── setup.sh             # 首次：从 Tina SDK 复制工具链到 ./toolchain/
-│   └── deploy.sh            # adb 部署到开发板 + 启动
-├── third_party/             # 所有第三方库（vendor 进仓库，自包含）
-│   ├── lvgl/                # LVGL 8.3.1 源码
-│   ├── lv_drivers/          # 显示(sunxifb) + 触摸(evdev) 驱动
-│   ├── freetype/            # 中文字体渲染库（头文件 + libfreetype.so）
-│   └── bt/                  # 蓝牙库 bundle
-│       ├── lib/             # libbtmg.so（4.0.3 good 版）+ 依赖
-│       ├── include/         # bt_manager.h 等 API 头文件
-│       └── bin/             # bt_test（调试用）
-├── assets/
-│   ├── fonts/               # 中文字体（思源黑体 .otf，运行时加载）
-│   └── image/               # 界面图片（bt.png，运行时从板上加载）
-└── src/                     # 我们自己的代码
-    ├── main.c               # 程序入口
-    ├── lv_conf.h            # LVGL 配置（颜色深度、字体、各功能开关）
-    ├── lv_drv_conf.h        # 显示/触摸驱动配置
-    ├── bt_speaker.c/.h      # 蓝牙封装（初始化、配对、播放控制）
-    └── ui/
-        ├── ui_main.c/.h     # 主界面
+├── .gitignore                # 排除 toolchain/ build*/ 等
+├── docs/                     # 本文档 + architecture.md + 设计稿（design/）
+├── firmware/rtl8723ds/       # 实测好的 BT 固件集（fw/config/rtk_hciattach + md5）
+├── scripts/                  # setup.sh（装工具链）+ deploy.sh（部署启动）
+├── src/                      # 全部第一方源码（分层：依赖只向下）
+│   ├── core/                 #   事件契约 player_event_t（纯 C99）
+│   ├── osal/                 #   OS 抽象（队列满丢最旧/mutex/time/log；posix 实现）
+│   ├── services/             #   业务后端：btmg_player.c + sim_player.c
+│   ├── ui/                   #   液态玻璃主题（ui_backend.h + theme.h + ui_liquidglass.c）
+│   ├── ports/                #   板级：fb/evdev/FreeType + main + lv_conf.h
+│   ├── apps/                 #   组装层（队列 → UI → 后端 → 33ms drain）
+│   └── tests/                #   host 自测（osal_test / sim_loop_test）
+├── assets/                   # 板上运行素材（fonts/ + image/），deploy.sh 推板
+├── third_party/              # vendor：LVGL / lv_drivers / freetype / bt 库
+└── cmake/                    # toolchain 文件 + vendor 库收集
 ```
 
-**核心思想**：除了工具链（太大，用脚本复制），所有依赖都 vendor 进仓库。克隆后跑一个 `setup.sh` + `make` 就能编译，不依赖本机其他环境。
+### 历史结构（M0~M5b，已废弃，§2 保留作构建原理讲解）
+
+M6 之前是三个源文件的扁平结构：`src/main.c`（入口）+ `src/bt_speaker.c`（蓝牙封装）
++ `src/ui/ui_main.c`（界面），手工 Makefile 构建。三层耦合的痛点与重构过程见
+`docs/architecture.md` 和本文 M6 一节。
+
+**核心思想**：所有依赖都 vendor 进仓库（`third_party/`），工具链由 `scripts/setup.sh`
+装入 `./toolchain/`（gitignore，可从 GitHub Release 下载裁剪版或从本地 SDK 复制）。
+克隆后 `./scripts/setup.sh` + `./build.sh` 就能编译，不依赖本机其他环境。
 
 ---
 
-## 2. 构建系统（Makefile）
+## 2. 构建系统（历史：Makefile 时代）
+
+> ⚠️ M6 起构建已改为 CMake（`./build.sh` 一键入口，详见 `docs/architecture.md` §7）。
+> 本节保留 Makefile 时代的讲解——里面"为什么"的部分（ABI 匹配、STAGING_DIR、链接
+> 顺序）在 CMake 里原样继承，逐项标注在 `cmake/third_party.cmake` 和 toolchain
+> 文件的注释里。
 
 本项目的 `Makefile` 参考了 SDK 里一个已经跑通的 LVGL demo（`lvgl_demo_build`），用最朴素的 Makefile 而不是 CMake，降低理解门槛。
 
@@ -521,7 +525,7 @@ AVRCP 协议**拿不到歌词**，只能拿歌名/歌手/专辑/时长/进度/�
 **背景**：M4a 的"深色文字直接叠在浅色产品照上"缺乏设计感，推翻重来。
 
 **方案选择**：写了 `scripts/gen_design.py`（PIL+numpy 程序化生成，2x 超采样），
-一次出三套 480×640 设计稿（`assets/design/mockup_*.png` + `compare.png` 对比图），
+一次出三套 480×640 设计稿（`docs/design/mockup_*.png` + `compare.png` 对比图），
 用户选了 **A 深空玻璃**（深蓝黑渐变 + 青色霓虹 + 玻璃卡片 + 唱盘）。
 另两套：B 落日唱盘（紫粉橙渐变+毛玻璃操作带）、C 云白极简（苹果风+产品照圆窗）。
 
@@ -577,7 +581,7 @@ AVRCP 协议**拿不到歌词**，只能拿歌名/歌手/专辑/时长/进度/�
 **背景**：用户觉得 M5 深空玻璃风格偏老（"深色+霓虹"是 2018-2020 风），
 要求出五套 2025-26 潮流方向、贴合白色球形产品本体的方案。
 
-**五套方案**（`scripts/gen_design.py --v2`，稿子 `assets/design/mockup2_*.png`、
+**五套方案**（`scripts/gen_design.py --v2`，稿子 `docs/design/mockup2_*.png`、
 对比 `compare2.png`）：
 - **D1 液态玻璃**（✅用户选定）：iOS 26 风，浅银白底+透明玻璃层叠+折射圆，深色文字+iOS 蓝
 - D2 极光流彩：紫粉青柔光 mesh 渐变+磨砂白卡+流光弧线
@@ -699,6 +703,85 @@ ports/                   板级：sunxifb / evdev / FreeType / main_linux.c + lv
 - ✅ 两行歌名《爱的故事上集 (DJ女声版)》：两行居中、歌手行隐藏、进度条独立无重叠
 - ✅ 超长歌名截断两行+省略号（《无赖》实测）
 - ✅ 暂停态切歌图标立即切 ⏸，唱盘开转
+
+**提交**：本次
+
+---
+
+### ✅ M8：仓库整洁化 + 工具链自举（克隆即构建）（已完成 2026-09-01）
+
+**背景**：参考 `app_sdk` 的项目排版（build.sh 一键入口 + platform 组件化 + 资源集中），
+整理仓库目录，并把"编译工具进项目"落地——目标是**别人克隆后两步出产物**。
+
+**目录整理**：
+- 删除根目录推送测试残留 `ssh_push.txt`、`test_push.txt`；删除 `docs/bt.png`
+  （与 `assets/image/bt.png` md5 相同、零引用的重复文件）；删空目录 `assets/images/`
+- `osal/osal_test.c` → `tests/`（M9 后再随源码收编为 `src/tests/`）
+- `assets/design/`（13 张设计稿 3.5MB）→ `docs/design/`：assets/ 定位回归"deploy.sh
+  推到板子的运行素材"，设计稿是文档性质的过程产物
+- 同步所有引用（CMakeLists 的测试路径、gen_design.py 的 OUT_DIR、代码注释里的
+  设计稿路径、文档引用）
+
+**一键构建**（仿 app_sdk 的 build.sh）：
+- 新增 `build.sh`：无参/-t113 交叉编译、`-host` 自测+ctest、`-clean` 清理
+
+**工具链自举（难点）**：
+- 目标：工具链 1.2GB 超 GitHub 100MB 单文件限制，不能进 git → 方案=裁剪 + tar.xz
+  + GitHub Release 分发，`setup.sh` 优先下载、失败回退本地 SDK 复制
+- **裁剪**（1.2GB→204MB）：删 libc/libm/libpthread 等巨型静态 .a（428MB 的 libc.a
+  只保留 `*_nonshared.a`）、gconv、C++/fortran 前后端、sanitizer、gdb/gcov、man；
+  cc1/collect2/as/ld 和 glibc 动态库全保留
+- **两个裁剪坑**：
+  1. 删了 `arm-openwrt-linux-gnueabi/bin/`（as/ld 等被 gcc.bin 经 PATH 查找）→
+     `invalid -march=armv7-a`（落到了宿主机 as 上）。从备份恢复
+  2. 删了 `arm-openwrt-linux-gnueabi/sys-include`（→../include 的符号链接）→
+     `stdint.h: No such file`（include_next 链断）。恢复符号链接
+- **等价性验证**：裁剪后重编产物 md5 与裁剪前**逐字节一致**（98c648…）；
+  模拟克隆目录（/tmp 下全新布局+解压工具链）构建成功，符号名/类型表与基准
+  完全一致（地址平移是调试段路径差异，正常）
+- 首次构建裁剪时误删 `sys-include` 导致 stdint 报错，也顺带确认了工具链头文件
+  搜索链：gcc 内置 include → include-fixed → sys-include(→../include) → 目标 include
+- **Release 分发**：`toolchain-v1` tag，asset `toolchain-gcc830-armhf-trimmed.tar.xz`
+  （28MB，sha256 dda08e…）。setup.sh 里 TOOLCHAIN_URL 可覆盖，走代理环境变量
+- **裁剪前备份**：完整工具链已备份到仓库外 `/home/zgl/SDK/toolchain-backup-gcc830-pretrim/`，
+  SDK 原始副本也在，双保险
+
+**文档**：README 重写为当前结构+克隆即用流程；本节 §1 结构树更新、§2 标注历史。
+
+**验证结果**：
+- ✅ host 自测 ctest 2/2 绿
+- ✅ 裁剪工具链重编产物 md5 与裁剪前一致
+- ✅ Release 下载 URL 与 setup.sh 一致，asset state=uploaded
+- ⏳ 真实克隆环境（另一台机器/目录）走 setup.sh 全流程：待验证
+
+**提交**：本次
+
+---
+
+### ✅ M9：目录再精简——源码收编 src/（顶层 21 项 → 14 项）（已完成 2026-09-02）
+
+**背景**：M8 后顶层仍有 7 个源码目录（core/osal/services/ui/ports/apps/tests）+ 3 个
+生成目录，用户希望顶层更少。参考 app_sdk"少量顶层目录"的风格，做结构性合并。
+M6 分层架构**逻辑不变**（依赖只向下），只是物理位置收进一个 `src/`。
+
+**目录变化**：
+- `core|osal|services|ui|ports|apps|tests` → `src/` 下（git mv 保历史）
+- 压平单实现嵌套目录：`services/btmg|sim/` → `src/services/btmg_player.c|sim_player.c`；
+  `ui/themes/liquidglass/` → `src/ui/`；`cmake/toolchain/` → `cmake/`
+- 顶层现在：`build.sh + 5 个 md/LICENSE + .github + assets docs firmware scripts cmake src third_party`
+  （toolchain/build*/ 为 gitignore/生成目录）
+
+**引用更新**：顶层 CMakeLists（源文件列表+include 目录+lv_conf.h 发现路径
+`ports`→`src/ports`）、cmake/third_party.cmake、build.sh、CI build.yml（toolchain
+文件路径）、接口头文件注释、README/CLAUDE.md/architecture.md/project-guide.md 树。
+`tests/*.c` 与 `ports/main_linux.c` 的 `../xxx/` 相对 include 在 src/ 内相对关系
+不变，零改动——这是当初选相对 include 的意外红利。
+
+**验证结果**：
+- ✅ `./build.sh -host`：ctest 2/2 绿
+- ✅ `./build.sh` 全量重编：产物 md5 与移动前**完全一致**（98c648af…，编译命令
+  等价到字节级）；板侧功能零影响，无需重新回归
+- ⏳ push 后 CI 双 job 绿（推送后确认）
 
 **提交**：本次
 

@@ -2,8 +2,8 @@
  * player_backend.h — 业务层接口（换业务源 = 换实现，UI 无感知）
  *
  * 实现：
- *   services/btmg/btmg_player.c  → player_backend_btmg（Allwinner btmanager，板上）
- *   services/sim/sim_player.c    → player_backend_sim（模拟数据源，host/CI 用）
+ *   services/btmg_player.c  → player_backend_btmg（Allwinner btmanager，板上）
+ *   services/sim_player.c    → player_backend_sim（模拟数据源，host/CI 用）
  *
  * 上层（ports/main）只在组装期认识具体实现（链接期选择），UI 层完全不认识本文件。
  */
@@ -29,8 +29,8 @@ typedef struct {
 } player_backend_t;
 
 /* 可选实现（链接期选择，组装层 extern 引用） */
-extern const player_backend_t player_backend_btmg;   /* services/btmg/：Allwinner btmanager */
-extern const player_backend_t player_backend_sim;    /* services/sim/：模拟源（host/CI，阶段5） */
+extern const player_backend_t player_backend_btmg;   /* services/btmg_player.c：Allwinner btmanager */
+extern const player_backend_t player_backend_sim;    /* services/sim_player.c：模拟源（host/CI） */
 
 /* btmg 实现的附加步骤：设置对外广播的蓝牙名（原 bt_speaker_init 的 alias 参数）。
  * 放在 init() 之后调用。 */

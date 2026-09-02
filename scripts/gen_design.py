@@ -30,7 +30,7 @@ W, H = 480 * S, 640 * S
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FONT_PATH = os.path.join(ROOT, "assets/fonts/SOURCEHANSANSCN_REGULAR.OTF")
 PHOTO_PATH = os.path.join(ROOT, "assets/image/bt.png")   # C 方案产品实拍
-OUT_DIR = os.path.join(ROOT, "assets/design")
+OUT_DIR = os.path.join(ROOT, "docs/design")
 
 random.seed(42)
 

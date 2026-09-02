@@ -1,7 +1,7 @@
-# cmake/toolchain/openwrt-armhf.cmake — 本机交叉工具链（./toolchain，setup.sh 产物）
+# cmake/openwrt-armhf.cmake — 本机交叉工具链（./toolchain，setup.sh 产物）
 #
 # 用法：
-#   cmake -B build-cmake -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/openwrt-armhf.cmake
+#   cmake -B build-cmake -DCMAKE_TOOLCHAIN_FILE=cmake/openwrt-armhf.cmake
 #   cmake --build build-cmake -j
 #
 # 坑位说明（勿动）：
@@ -14,7 +14,7 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 
-set(TOOLCHAIN_BIN "${CMAKE_CURRENT_LIST_DIR}/../../toolchain/bin")
+set(TOOLCHAIN_BIN "${CMAKE_CURRENT_LIST_DIR}/../toolchain/bin")
 if(NOT EXISTS "${TOOLCHAIN_BIN}/arm-openwrt-linux-gcc")
     message(FATAL_ERROR
         "找不到 ${TOOLCHAIN_BIN}/arm-openwrt-linux-gcc\n"

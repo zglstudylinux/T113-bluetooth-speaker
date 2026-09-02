@@ -1,6 +1,6 @@
 /*
  * theme.h — D1 液态玻璃主题：色板 / 素材路径 / 布局常量
- * （从原 src/ui/ui_main.c 拆出，数值与设计稿 assets/design/mockup2_liquidglass.png 一致）
+ * （从原 src/ui/ui_main.c 拆出，数值与设计稿 docs/design/mockup2_liquidglass.png 一致）
  */
 #ifndef LIQUIDGLASS_THEME_H
 #define LIQUIDGLASS_THEME_H

@@ -1,8 +1,8 @@
-# cmake/toolchain/gnueabihf.cmake — CI 用 apt 交叉工具链（gcc-arm-linux-gnueabihf）
+# cmake/gnueabihf.cmake — CI 用 apt 交叉工具链（gcc-arm-linux-gnueabihf）
 #
 # 用法（GitHub Actions）：
 #   sudo apt-get install -y gcc-arm-linux-gnueabihf
-#   cmake -B build-ci -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/gnueabihf.cmake
+#   cmake -B build-ci -DCMAKE_TOOLCHAIN_FILE=cmake/gnueabihf.cmake
 #
 # 同为 armhf 硬浮点 ABI，能链接 vendor 的 ARM .so/.a（OpenWrt gcc8.3 产物，
 # glibc 2.29 armhf 目标）。链接期一般不查符号版本；若首跑报 GLIBC 版本错误，

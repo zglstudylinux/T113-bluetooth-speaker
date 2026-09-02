@@ -1,15 +1,16 @@
-# T113 蓝牙音箱 — 顶层 CMake（阶段4：分层目录定稿）
+# T113 蓝牙音箱 — 顶层 CMake（M6 分层架构，M9 源码收编进 src/）
 #
-# 目录分层（依赖只向下，详见 docs/architecture.md §3）：
-#   core/     事件契约（纯 C99）
-#   osal/     OS 抽象（posix 实现）
-#   services/ 业务后端（btmg / sim）
-#   ui/       界面（themes/liquidglass 主题）
-#   ports/    板级移植（fb/evdev/freetype/main）+ lv_conf.h
-#   apps/     组装层（队列 + drain + 选后端/主题）
+# 目录分层（依赖只向下，详见 docs/architecture.md §3；物理位置在 src/ 下）：
+#   src/core/     事件契约（纯 C99）
+#   src/osal/     OS 抽象（posix 实现）
+#   src/services/ 业务后端（btmg / sim）
+#   src/ui/       界面（liquidglass 主题）
+#   src/ports/    板级移植（fb/evdev/freetype/main）+ lv_conf.h
+#   src/apps/     组装层（队列 + drain + 选后端/主题）
+#   src/tests/    host 自测（osal_test / sim_loop_test）
 #
 # 用法：
-#   cmake -B build-cmake -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/openwrt-armhf.cmake
+#   cmake -B build-cmake -DCMAKE_TOOLCHAIN_FILE=cmake/openwrt-armhf.cmake
 #   cmake --build build-cmake -j
 # 产物 build/bt_speaker（deploy.sh 零改动）。
 #
@@ -17,7 +18,7 @@
 #   - ABI: armv7-a/neon/hard-float（toolchain 文件内）
 #   - LV_USE_PNG/LV_USE_FS_POSIX 命令行宏（lodepng include 链断了，CFLAGS 兜底）
 #   - 链接顺序 -lbtmg -lshared-mainloop …（cmake/third_party.cmake 的 bt INTERFACE 库）
-#   - lv_conf.h 发现：ports/ 在 include 路径里（lvgl 用 __has_include("lv_conf.h")）
+#   - lv_conf.h 发现：src/ports/ 在 include 路径里（lvgl 用 __has_include("lv_conf.h")）
 cmake_minimum_required(VERSION 3.16)
 project(bt_speaker C)
 
@@ -37,26 +38,26 @@ add_compile_options(-Wall -Wno-unused-function -Wno-unused-parameter
 # 用法：cmake -B build-host && cmake --build build-host && ctest --test-dir build-host --output-on-failure
 get_filename_component(_cc_name "${CMAKE_C_COMPILER}" NAME)
 if(_cc_name MATCHES "^(gcc|cc|clang)(-[0-9.]+)?$")
-    add_library(osal STATIC osal/osal_posix.c)
+    add_library(osal STATIC src/osal/osal_posix.c)
     target_include_directories(osal PUBLIC
-        ${PROJECT_SOURCE_DIR}/osal ${PROJECT_SOURCE_DIR}/core)
+        ${PROJECT_SOURCE_DIR}/src/osal ${PROJECT_SOURCE_DIR}/src/core)
     find_package(Threads REQUIRED)
     target_link_libraries(osal PUBLIC Threads::Threads)
 
     # sim 后端（可移植层，无 LVGL/BT 依赖）
-    add_library(sim_backend STATIC services/sim/sim_player.c)
-    target_include_directories(sim_backend PUBLIC ${PROJECT_SOURCE_DIR}/services)
+    add_library(sim_backend STATIC src/services/sim_player.c)
+    target_include_directories(sim_backend PUBLIC ${PROJECT_SOURCE_DIR}/src/services)
     target_link_libraries(sim_backend PUBLIC osal)
 
-    add_executable(osal_test osal/osal_test.c)
+    add_executable(osal_test src/tests/osal_test.c)
     target_include_directories(osal_test PRIVATE
-        ${PROJECT_SOURCE_DIR}/osal ${PROJECT_SOURCE_DIR}/core)
+        ${PROJECT_SOURCE_DIR}/src/osal ${PROJECT_SOURCE_DIR}/src/core)
     target_link_libraries(osal_test PRIVATE osal)
     target_compile_options(osal_test PRIVATE -Wall -Wextra -Werror)
 
-    add_executable(sim_loop_test tests/sim_loop_test.c)
+    add_executable(sim_loop_test src/tests/sim_loop_test.c)
     target_include_directories(sim_loop_test PRIVATE
-        ${PROJECT_SOURCE_DIR}/osal ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/services)
+        ${PROJECT_SOURCE_DIR}/src/osal ${PROJECT_SOURCE_DIR}/src/core ${PROJECT_SOURCE_DIR}/src/services)
     target_link_libraries(sim_loop_test PRIVATE sim_backend)
     target_compile_options(sim_loop_test PRIVATE -Wall -Wextra -Werror)
 
@@ -70,33 +71,33 @@ endif()
 include(cmake/third_party.cmake)
 
 # ---------------- osal（目标板） ----------------
-add_library(osal STATIC osal/osal_posix.c)
+add_library(osal STATIC src/osal/osal_posix.c)
 target_include_directories(osal PUBLIC
-    ${PROJECT_SOURCE_DIR}/osal
-    ${PROJECT_SOURCE_DIR}/core)
+    ${PROJECT_SOURCE_DIR}/src/osal
+    ${PROJECT_SOURCE_DIR}/src/core)
 find_package(Threads REQUIRED)
 target_link_libraries(osal PUBLIC Threads::Threads)
 
 # ---------------- 目标板主程序（交叉工具链） ----------------
 add_executable(bt_speaker
-    ports/main_linux.c
-    ports/lv_port_disp.c
-    ports/lv_port_indev.c
-    ports/lv_port_font.c
-    apps/app_player.c
-    services/btmg/btmg_player.c
-    ui/themes/liquidglass/ui_liquidglass.c)
+    src/ports/main_linux.c
+    src/ports/lv_port_disp.c
+    src/ports/lv_port_indev.c
+    src/ports/lv_port_font.c
+    src/apps/app_player.c
+    src/services/btmg_player.c
+    src/ui/ui_liquidglass.c)
 
 target_include_directories(bt_speaker PRIVATE
-    ${PROJECT_SOURCE_DIR}/osal                                 # osal.h
-    ${PROJECT_SOURCE_DIR}/core                                 # player_types.h
-    ${PROJECT_SOURCE_DIR}/services                             # player_backend.h
-    ${PROJECT_SOURCE_DIR}/ui                                   # ui_backend.h
-    ${PROJECT_SOURCE_DIR}/ports                                # lv_port_*.h + lv_conf.h 发现
-    ${PROJECT_SOURCE_DIR}/third_party                          # lvgl.h / lv_drivers 头
+    ${PROJECT_SOURCE_DIR}/src/osal                            # osal.h
+    ${PROJECT_SOURCE_DIR}/src/core                            # player_types.h
+    ${PROJECT_SOURCE_DIR}/src/services                        # player_backend.h
+    ${PROJECT_SOURCE_DIR}/src/ui                              # ui_backend.h
+    ${PROJECT_SOURCE_DIR}/src/ports                           # lv_port_*.h + lv_conf.h 发现
+    ${PROJECT_SOURCE_DIR}/third_party                         # lvgl.h / lv_drivers 头
     ${PROJECT_SOURCE_DIR}/third_party/lvgl/src/extra/libs/freetype   # lv_freetype.h（lvgl 树旧 API）
-    ${PROJECT_SOURCE_DIR}/third_party/freetype/include         # ft2build.h
-    ${PROJECT_SOURCE_DIR}/third_party/bt/include               # bt_manager.h
+    ${PROJECT_SOURCE_DIR}/third_party/freetype/include        # ft2build.h
+    ${PROJECT_SOURCE_DIR}/third_party/bt/include              # bt_manager.h
 )
 
 target_link_libraries(bt_speaker PRIVATE lvgl lv_drivers freetype bt osal m)

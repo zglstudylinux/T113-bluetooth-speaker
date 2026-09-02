@@ -33,7 +33,7 @@ typedef struct {
     void (*deinit)(void);
 } ui_backend_t;
 
-extern const ui_backend_t ui_backend_liquidglass;     /* ui/themes/liquidglass/ */
+extern const ui_backend_t ui_backend_liquidglass;     /* src/ui/ */
 
 #ifdef __cplusplus
 }
