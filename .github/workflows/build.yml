@@ -56,7 +56,7 @@ jobs:
         run: cmake --build build-host -j2
 
       - name: 断言模拟器产物存在
-        run: test -x build/bt_speaker_sim && echo "OK: bt_speaker_sim"
+        run: test -x build/bt_speaker_sim && echo "OK bt_speaker_sim"
 
       - name: 模拟器冒烟（dummy 无头显示，sim→队列→drain→UI 渲染整链路跑 3s）
         run: SDL_VIDEODRIVER=dummy ./build/bt_speaker_sim -t 3
