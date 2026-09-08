@@ -87,3 +87,8 @@ push/PR 自动跑 GitHub Actions（[`.github/workflows/build.yml`](.github/workf
 
 - `build-arm`：apt 交叉工具链完整编译 + 断言产物为 32-bit ARM hard-float ELF
 - `build-host`：`-Werror` 编译可移植层 + ctest 自测 + SDL 模拟器编译断言 + dummy 无头冒烟（整链路渲染跑 3s）
+
+CI 通过后每个 run 页面（Actions → 对应 run → Artifacts）可下载产物：
+
+- **bt_speaker_arm**：板上程序，`deploy.sh` 会用本地构建的同名产物，手动部署时推到板上 `/usr/bin/bt_speaker`（`chmod +x`）
+- **bt_speaker_sim_x86_64**：x86 模拟器单文件，Ubuntu 22.04+ 直接跑（系统需 `libsdl2-2.0-0 libfreetype6`，一般桌面自带）；把二进制放到**仓库检出目录的根**运行即加载 `assets/` 素材与中文字体（放到别处则优雅降级为无图无中文）

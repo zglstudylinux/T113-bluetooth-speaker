@@ -813,6 +813,11 @@ M6 分层架构**逻辑不变**（依赖只向下），只是物理位置收进�
 - ✅ `git status third_party/` 空——vendor 零改动
 - ⏳ push 后 CI 双 job 绿（推送后确认）
 
+**M10.1 补充：CI 产物分发（upload-artifact）**：
+- 首次推送 CI 直接 failure 且 jobs 列表为空——**workflow 文件本身 YAML 语法错**：`run: test -x … && echo "OK: bt_speaker_sim"` 的 run 标量含冒号+空格（引号是 shell 的一部分不是 YAML 的）。教训：改 workflow 先本地 `yaml.safe_load` 校验；症状特征是 run 标 failure 但没有任何 job。
+- 修复后双 job 绿，加 `actions/upload-artifact@v4`：`bt_speaker_arm`（板上程序）+ `bt_speaker_sim_x86_64`（模拟器单文件），`if-no-files-found: error`。
+- 配套把模拟器素材路径从编译期绝对路径（`${PROJECT_SOURCE_DIR}/assets`，CI 机器路径烤死在产物里）改成**相对路径 `assets`**——产物下载后在任意仓库检出根运行即命中素材+字体。像素采样三验证：bg 命中（≈0xE8ECF2）、disc 命中（深灰）、中文字形命中（歌名区 101 深色像素）；仓库外运行优雅降级 exit 0。
+
 **提交**：本次
 
 ---

@@ -4,6 +4,8 @@
 #             完整编译 + 链接 vendor ARM 库，断言产物为 32-bit ARM ELF
 # build-host: 可移植层门禁——core/osal/sim 在 host gcc -Werror 下编译，
 #             跑 OSAL 队列自测 + sim 整链路自测（无板无 GUI 无 BT）
+# 两个 job 均上传产物 artifact：bt_speaker_arm（板上）/ bt_speaker_sim_x86_64（模拟器，
+#             在仓库根目录运行自动加载 assets/ 素材）
 name: build
 
 on:
@@ -39,6 +41,13 @@ jobs:
           file build/bt_speaker | grep -q "ELF 32-bit.*ARM"
           echo "OK: 32-bit ARM ELF"
 
+      - name: 上传产物（板上程序）
+        uses: actions/upload-artifact@v4
+        with:
+          name: bt_speaker_arm
+          path: build/bt_speaker
+          if-no-files-found: error
+
   build-host:
     runs-on: ubuntu-latest
     steps:
@@ -63,3 +72,10 @@ jobs:
 
       - name: 自测（OSAL 队列 + sim 整链路）
         run: ctest --test-dir build-host --output-on-failure
+
+      - name: 上传产物（x86 模拟器）
+        uses: actions/upload-artifact@v4
+        with:
+          name: bt_speaker_sim_x86_64
+          path: build/bt_speaker_sim
+          if-no-files-found: error

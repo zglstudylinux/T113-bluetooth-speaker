@@ -102,7 +102,9 @@ if(_cc_name MATCHES "^(gcc|cc|clang)(-[0-9.]+)?$")
             src/services/sim_player.c
             src/ui/ui_liquidglass.c)                             # 与板上同一份主题
         target_compile_definitions(bt_speaker_sim PRIVATE
-            BOARD_RES_PATH="${PROJECT_SOURCE_DIR}/assets"        # 素材/字体直读 repo
+            # 素材/字体相对当前工作目录解析：在仓库根运行即命中 assets/；
+            # CI 产物（artifact）下载后配一份仓库即可直接跑（可移植，勿改回绝对路径）
+            BOARD_RES_PATH="assets"
             LV_CONF_INCLUDE_SIMPLE)                              # sdl.h → "lv_drv_conf.h"（host 版）
         target_include_directories(bt_speaker_sim PRIVATE
             ${PROJECT_SOURCE_DIR}/src/osal

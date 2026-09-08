@@ -36,7 +36,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 编译产物：`build/bt_speaker`（ARM 硬浮点 ELF，动态链接；CMake 中间文件在 `build-cmake/`，与产物分开）；host 树另有 `build/bt_speaker_sim`（x86-64）。
 - `deploy.sh` 需要 adb 连到虚拟机（板子 USB OTG）；会把 app/字体/图片推到板上 `/mnt/UDISK/speaker/`（rootfs overlay 只有 ~8MB 放不下大文件），BT 库推到 `/lib`、`/usr/lib`，最后 `start-stop-daemon -b` 后台启动。
 - **板侧验证**：`adb shell "ps | grep bt_speaker"`、`adb shell hciconfig hci0`（应 `UP RUNNING PSCAN ISCAN`，ACL MTU 1021）；显示效果用 `adb pull /dev/fb0` 抓帧分析（**字节序 BGRX**，可见页是前 480×640×4 字节）。
-- GitHub CI（`.github/workflows/build.yml`）：push/PR 触发双 job——`build-arm`（apt gnueabihf 真交叉编译 + 断言 ARM ELF）+ `build-host`（-Werror 可移植层 + ctest + SDL 模拟器编译断言 + `SDL_VIDEODRIVER=dummy` 无头冒烟 3s）。
+- GitHub CI（`.github/workflows/build.yml`）：push/PR 触发双 job——`build-arm`（apt gnueabihf 真交叉编译 + 断言 ARM ELF）+ `build-host`（-Werror 可移植层 + ctest + SDL 模拟器编译断言 + `SDL_VIDEODRIVER=dummy` 无头冒烟 3s）。两 job 各自 upload-artifact（`bt_speaker_arm` / `bt_speaker_sim_x86_64`）；模拟器产物素材路径是相对的（`BOARD_RES_PATH="assets"`，在仓库根运行即命中，勿改回绝对路径）。改 workflow 后先本地 `python3 -c "import yaml,yaml.safe_load(...)"` 校验（M10 踩过 run 值含冒号导致整个 workflow 无效、CI 无 jobs 直接 failure 的坑）。
 
 ## 构建/部署的关键约定（坑）
 
