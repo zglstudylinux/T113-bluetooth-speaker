@@ -19,10 +19,15 @@
 #define COL_PILL_BG   0xFFFFFF   /* 状态胶囊 */
 #define COL_PILL_TXT  0x303A4C
 
-/* ---------- 图片资源路径（deploy.sh 推到 /mnt/UDISK/speaker/image/） ---------- */
-#define IMG_BG_FILE   "/mnt/UDISK/speaker/image/bg.png"
+/* ---------- 资源根路径（板上是 deploy.sh 推送目标；host/SDL 构建经 -D 覆盖为 repo assets/） ---------- */
+#ifndef BOARD_RES_PATH
+#define BOARD_RES_PATH "/mnt/UDISK/speaker"
+#endif
+
+/* ---------- 图片资源路径 ---------- */
+#define IMG_BG_FILE   BOARD_RES_PATH "/image/bg.png"
 #define IMG_BG_PATH   "S:" IMG_BG_FILE
-#define IMG_DISC_FILE "/mnt/UDISK/speaker/image/disc.png"
+#define IMG_DISC_FILE BOARD_RES_PATH "/image/disc.png"
 #define IMG_DISC_PATH "S:" IMG_DISC_FILE
 
 /* ---------- 布局常量（与设计稿一致，单位 px） ---------- */

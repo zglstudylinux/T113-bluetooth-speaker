@@ -787,6 +787,36 @@ M6 分层架构**逻辑不变**（依赖只向下），只是物理位置收进�
 
 ---
 
+### ✅ M10：x86 SDL 模拟器——host 上跑完整 UI + CI 门禁（代码完成，窗口已验证）
+
+**背景**：项目后续要做"手把手写代码"教程，教学流程是**先在 Ubuntu x86 上完成 UI（模拟数据驱动）→ 再完成业务逻辑（换真蓝牙后端上板）**——这正是 M6 分层架构的镜像。现状 host 只能跑无 UI 的可移植层自测，主程序编不了的两个硬障碍：①组装层硬编码 btmg 后端（vendor ARM .so host 链不了）；②显示/触摸绑死 fb/evdev、素材路径硬编码 `/mnt/UDISK`。
+
+**做了什么**：
+1. **素材路径可覆盖**：`theme.h`/`lv_port_font.c` 的资源根路径改 `#ifndef BOARD_RES_PATH` 守卫——板上默认值不变，模拟器构建传 `-DBOARD_RES_PATH=<repo>/assets` 直读仓库素材。
+2. **后端选择进接口**：`player_backend_t` 加可选成员 `set_alias`（btmg 独有概念，sim 填 NULL）；`app_player_start()` 首参加 backend 指针——组装层从"硬编码 btmg"变为"调用方选后端"，板上 `main_linux.c` 传 btmg、模拟器 `main_sdl.c` 传 sim，各一行。
+3. **新增 `src/ports/sdl/`**（板上构建完全不碰）：host 版 `lv_drv_conf.h`（`USE_SDL=1`、480×640=板上屏）、`lv_port_disp.c`（`sdl_display_flush`，32bpp 与 SDL ARGB8888 天然匹配纯 memcpy）、`lv_port_indev.c`（鼠标=触摸）、`main_sdl.c`（同一组装顺序 + `-t 秒` 冒烟自动退出）。
+4. **vendor SDL 驱动点亮（零改动）**：`third_party/lv_drivers/sdl/` 本来就 vendor 了完整 SDL 驱动，只因 `USE_SDL=0` 编成空 TU——host 构建单独编 `sdl.c/sdl_common.c` 两个文件，给 `LV_CONF_INCLUDE_SIMPLE` 宏让它命中 host 版 `lv_drv_conf.h` 而非 third_party 的 USE_SDL=0 版。
+5. **CMake host 分支扩展**：缺 `libsdl2-dev`/`libfreetype-dev` 时自动跳过（STATUS 提示），装了必建；lvgl host 副本镜像 ARM 侧目标但 FreeType 用系统版（vendor .so 是 ARM）。
+6. **`build.sh -sim`**：与 `-host` 共用 build-host 树，构建 + `exec` 直接弹窗。
+7. **CI build-host job**：装 SDL/FreeType 开发库 → 断言 `bt_speaker_sim` 产物 → `SDL_VIDEODRIVER=dummy ./build/bt_speaker_sim -t 3` 无头冒烟（CI 无显示器也能跑真实渲染管线：sim→队列→drain→控件→flush）。
+
+**踩的坑**：
+- **`app_player.h` 用了 `player_backend_t` 却没 include 它的头**：板上代码是 main_linux.c 恰好先 include 了 backend.h 才侥幸编译通过；main_sdl.c include 顺序不同立刻炸出 `unknown type name`。教训：**头文件自给自足**（自己需要的类型自己 include），不能依赖使用方的 include 顺序。
+- **`sdl.h` 的双路径发现**：`LV_CONF_INCLUDE_SIMPLE` 必须同时给 sdl_drv 库和 bt_speaker_sim 主程序（port 文件也要 include sdl.h）——只给库的话 port 文件走相对路径摸到 third_party 的 USE_SDL=0 版，`SDL_HOR_RES`/`sdl_init` 全部 undeclared。
+- **lvgl 静态库在 host 也要链 FreeType**：树内 `lv_freetype.c` 引用 `FT_*`/`FTC_*` 符号，ARM 侧由 vendor freetype .so 提供，host 侧要 `target_link_libraries(lvgl PUBLIC Freetype::Freetype)`。
+
+**验证结果**：
+- ✅ ctest 2/2 回归绿；ARM 全量重编零警告，产物仍 32-bit ARM hard-float ELF
+- ✅ `SDL_VIDEODRIVER=dummy -t 3` 冒烟退出码 0
+- ✅ 真窗口（虚拟机桌面）：液态玻璃 UI 完整渲染——抓窗截图像素采样与主题色精确一致（bg=0xE8ECF2、播放钮=0x1C202C），《晴天》→演示暂停→《夜曲》剧本轮播正常，进度/时间/音量/状态胶囊全对
+- ✅ 唱盘旋转：1 秒间隔两帧 diff 872/1000 采样点
+- ✅ `git status third_party/` 空——vendor 零改动
+- ⏳ push 后 CI 双 job 绿（推送后确认）
+
+**提交**：本次
+
+---
+
 ## 7. 后续里程碑（待做）
 
 - [ ] **M4b**：开机自启（rc.final / init 脚本）+ README 收尾

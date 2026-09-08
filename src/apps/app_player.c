@@ -43,9 +43,10 @@ static void drain_timer_cb(lv_timer_t *t)
 
 /* ---------- 对外组装接口（ports/main 调用） ---------- */
 
-int app_player_start(const char *alias, const ui_backend_t *ui, const ui_env_t *env)
+int app_player_start(const player_backend_t *backend, const char *alias,
+                     const ui_backend_t *ui, const ui_env_t *env)
 {
-    if (!ui || !env)
+    if (!backend || !ui || !env)
         return -1;
 
     /* 1. 队列先建（早到事件有地方放） */
@@ -64,13 +65,14 @@ int app_player_start(const char *alias, const ui_backend_t *ui, const ui_env_t *
         return -1;
     }
 
-    /* 3. 业务后端（btmanager 线程开始往队列灌事件） */
-    g_backend = &player_backend_btmg;
+    /* 3. 业务后端（业务线程开始往队列灌事件；板上=btmg，host/sim=模拟源） */
+    g_backend = backend;
     if (g_backend->init(backend_emit) != 0) {
         fprintf(stderr, "app_player: backend init fail\n");
         return -1;
     }
-    player_backend_btmg_set_alias(alias);
+    if (g_backend->set_alias)
+        g_backend->set_alias(alias);
 
     /* 4. drain timer：LVGL 线程消费 */
     g_drain_timer = lv_timer_create(drain_timer_cb, DRAIN_MS, NULL);

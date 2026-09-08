@@ -26,15 +26,14 @@ typedef struct {
     int  (*query_state)(void);
     /* 播放控制。UI 线程直接调用（AVRCP 往返本来就是异步的，不阻塞） */
     int  (*cmd)(player_cmd_t c);
+    /* 可选：设置对外广播名（btmg 独有概念；模拟源无需实现，填 NULL 即可）。
+     * 组装层在 init() 之后调用。 */
+    void (*set_alias)(const char *alias);
 } player_backend_t;
 
 /* 可选实现（链接期选择，组装层 extern 引用） */
 extern const player_backend_t player_backend_btmg;   /* services/btmg_player.c：Allwinner btmanager */
 extern const player_backend_t player_backend_sim;    /* services/sim_player.c：模拟源（host/CI） */
-
-/* btmg 实现的附加步骤：设置对外广播的蓝牙名（原 bt_speaker_init 的 alias 参数）。
- * 放在 init() 之后调用。 */
-void player_backend_btmg_set_alias(const char *alias);
 
 #ifdef __cplusplus
 }

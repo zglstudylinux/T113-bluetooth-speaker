@@ -1,33 +1,39 @@
 /*
- * main_linux.c — Linux/T113 入口 + 组装 + 主循环（ports 层）
+ * main_sdl.c — host/x86 模拟器入口（ports 层，SDL 窗口版 main_linux.c）
  *
- * 组装顺序（顺序很重要，见 project-guide §5.1/§5.4）：
- *   1. LVGL + 显示 + 触摸 + 字体（ports）
- *   2. UI 主题 init（liquidglass）
- *   3. app_player_start：队列先建 → btmg 后端开始灌事件 → drain timer 消费
- *      （早到事件天然缓冲，query_state 兜底补发）
+ * 与板上 main_linux.c 同一组装顺序：
+ *   1. LVGL + SDL 显示/鼠标 + FreeType 字体（字体端口复用 src/ports/lv_port_font.c，
+ *      经 BOARD_RES_PATH 宏指向 repo assets/）
+ *   2. UI 主题 init（同一份 liquidglass 主题，与板上零差别）
+ *   3. app_player_start：队列先建 → **sim 模拟后端**灌事件 → drain timer 消费
  *   4. lv_timer_handler 主循环
  *
- * 替代原 src/main.c；本层是唯一认识所有模块的地方（组装层 apps/ 供它调用）。
+ * 与板上唯一差异 = 业务后端（player_backend_sim vs player_backend_btmg）+
+ * 显示/输入端口（SDL vs fb/evdev）——这正是 UI/业务解耦的直接演示。
+ *
+ * 用法：bt_speaker_sim [-t 秒]
+ *   -t N  跑 N 秒后自动退出（CI 冒烟用，配合 SDL_VIDEODRIVER=dummy）；缺省一直跑
  */
 #include "lvgl/lvgl.h"
 #include "lv_freetype.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
-#include "lv_port_font.h"
-#include "../ui/ui_backend.h"
-#include "../apps/app_player.h"
-#include "../services/player_backend.h"
+#include "../lv_port_font.h"
+#include "../../ui/ui_backend.h"
+#include "../../apps/app_player.h"
+#include "../../services/player_backend.h"
 
 #include <unistd.h>
 #include <time.h>
 #include <sys/time.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
-#define BT_ALIAS  "ZGL_BT_SPEAKER"
+/* 模拟器无对外广播名（set_alias 为 NULL，组装层自动忽略） */
+#define SIM_ALIAS  ""
 
-/* LVGL tick：LV_TICK_CUSTOM=1 时 custom_tick_get 直接供时基 */
+/* LVGL tick：与 main_linux.c 相同（LV_TICK_CUSTOM=1 时 custom_tick_get 供时基） */
 uint32_t custom_tick_get(void)
 {
     static uint64_t start_ms = 0;
@@ -52,9 +58,14 @@ static void ui_cmd_request(player_cmd_t c)
 
 int main(int argc, char *argv[])
 {
-    (void)argc; (void)argv;
+    /* -t <秒>：冒烟模式，N 秒后自动退出 0 */
+    int smoke_s = 0;
+    for (int i = 1; i + 1 < argc; i += 2) {
+        if (strcmp(argv[i], "-t") == 0)
+            smoke_s = atoi(argv[i + 1]);
+    }
 
-    /* ===== 1. 平台端口 ===== */
+    /* ===== 1. 平台端口（SDL） ===== */
     if (lv_port_disp_init() != 0)
         return 1;
     lv_port_indev_init();
@@ -71,8 +82,8 @@ int main(int argc, char *argv[])
         .cmd_request = ui_cmd_request,
     };
 
-    /* 队列先建 → UI init → btmg 后端灌事件 → drain timer 消费 */
-    if (app_player_start(&player_backend_btmg, BT_ALIAS,
+    /* 队列先建 → UI init → sim 后端灌事件 → drain timer 消费（与板上同序） */
+    if (app_player_start(&player_backend_sim, SIM_ALIAS,
                          &ui_backend_liquidglass, &env) != 0) {
         fprintf(stderr, "app_player start fail\n");
         lv_port_disp_exit();
@@ -80,13 +91,16 @@ int main(int argc, char *argv[])
     }
     app_player_query_state();
 
-    /* ===== 4. 主循环 ===== */
+    /* ===== 4. 主循环（-t 模式计时退出） ===== */
+    uint32_t deadline_ms = smoke_s ? custom_tick_get() + (uint32_t)smoke_s * 1000 : 0;
     while (1) {
         uint32_t time_till_next = lv_timer_handler();
         usleep((time_till_next > 0 ? time_till_next : 1) * 1000);
+        if (smoke_s && custom_tick_get() >= deadline_ms)
+            break;
     }
 
-    /* 不可达（保留正常退出路径的完整清理顺序） */
+    printf("sim: exit after %ds\n", smoke_s);
     app_player_stop();
     lv_port_font_exit();
     lv_port_disp_exit();

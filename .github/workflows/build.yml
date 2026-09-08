@@ -44,11 +44,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure（host，只构建可移植层自测）
+      - name: 安装依赖（SDL2/FreeType 开发库，x86 模拟器用）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev libfreetype-dev
+
+      - name: Configure（host：可移植层自测 + SDL 模拟器）
         run: cmake -B build-host -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build build-host -j2
+
+      - name: 断言模拟器产物存在
+        run: test -x build/bt_speaker_sim && echo "OK: bt_speaker_sim"
+
+      - name: 模拟器冒烟（dummy 无头显示，sim→队列→drain→UI 渲染整链路跑 3s）
+        run: SDL_VIDEODRIVER=dummy ./build/bt_speaker_sim -t 3
 
       - name: 自测（OSAL 队列 + sim 整链路）
         run: ctest --test-dir build-host --output-on-failure

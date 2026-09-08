@@ -217,8 +217,8 @@ static int btmg_init(void (*emit)(const player_event_t *ev))
 }
 
 /* alias 设置从 init 拆出为独立步骤（原 bt_speaker_init(alias) 的 alias 参数，
- * btmg_init 签名统一后经此设置；UI 创建后、或 init 后立刻调用均可） */
-void player_backend_btmg_set_alias(const char *alias)
+ * 组装层在 init() 后经接口成员 set_alias 调用） */
+static void btmg_set_alias(const char *alias)
 {
     if (alias && alias[0])
         bt_manager_set_adapter_name(alias);
@@ -283,4 +283,5 @@ const player_backend_t player_backend_btmg = {
     .deinit      = btmg_deinit,
     .query_state = btmg_query_state,
     .cmd         = btmg_cmd,
+    .set_alias   = btmg_set_alias,
 };

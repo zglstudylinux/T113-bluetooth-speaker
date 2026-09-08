@@ -7,8 +7,10 @@
 
 #include <stdio.h>
 
-/* 板上资源路径（deploy.sh 推送目标） */
+/* 板上资源根路径（deploy.sh 推送目标；host/SDL 构建经 -D 覆盖为 repo assets/） */
+#ifndef BOARD_RES_PATH
 #define BOARD_RES_PATH   "/mnt/UDISK/speaker"
+#endif
 #define FONT_CN_REGULAR  BOARD_RES_PATH "/fonts/SOURCEHANSANSCN_REGULAR.OTF"
 
 static lv_ft_info_t ft_large;   /* 44 号：歌名 */

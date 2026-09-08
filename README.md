@@ -18,6 +18,7 @@
 │   ├── services/             #   业务后端：btmg_player.c（板上）+ sim_player.c（模拟）
 │   ├── ui/                   #   液态玻璃主题（ui_backend_t，只认 player_event_t）
 │   ├── ports/                #   板级：fb 显示 / evdev 触摸 / FreeType 字体 / main
+│   │   └── sdl/              #   x86 模拟器端口：SDL 窗口/鼠标 + main_sdl（build.sh -sim）
 │   ├── apps/                 #   组装层：队列 → UI init → 后端 init → 33ms drain
 │   └── tests/                #   host 自测（OSAL 队列 / sim 整链路，ctest）
 ├── assets/                   # 板上运行素材（fonts/ + image/），deploy.sh 推板
@@ -42,8 +43,13 @@
 
 ```bash
 ./build.sh -host       # host 自测：OSAL 队列 + sim 整链路（ctest，无需工具链/板子）
+./build.sh -sim        # x86 SDL 模拟器：480×640 窗口跑完整 UI + sim 播放后端（鼠标=触摸）
 ./build.sh -clean      # 清理构建目录
 ```
+
+模拟器（Ubuntu 需 `sudo apt install libsdl2-dev libfreetype-dev`）：与板上同一份
+UI 主题代码，仅业务后端换成 sim 模拟源（剧本吐事件）、显示/触摸换成 SDL 窗口/鼠标——
+无板子也能开发/演示界面，是"先 x86 做 UI、再上板接真蓝牙"工作流（后续教程路线）的载体。
 
 工具链说明：必须用 `toolchain-sunxi-glibc-gcc-830`（gcc 8.3 **armhf 硬浮点**），
 与板上 rootfs（glibc 2.29 armhf）和 `libbtmg.so` 匹配。SDK 默认的 linaro 5.3.1
@@ -64,6 +70,7 @@
 - [x] M0~M5b：环境/蓝牙 bring-up/完整 UI/产品图/液态玻璃主题（详见 project-guide）
 - [x] M6：架构重构（CMake + UI/业务解耦 + OSAL 分层 + GitHub CI）
 - [x] M7：板上回归 + 长歌名自适应 / 暂停态切歌图标修复
+- [x] M10：x86 SDL 模拟器（host 跑完整 UI + sim 后端，CI 冒烟门禁）
 - [ ] M4b：开机自启 + 收尾
 
 📖 **详细说明文档**：[`docs/project-guide.md`](docs/project-guide.md)（原理、代码走读、踩坑记录、排查指南，小白向）
@@ -79,4 +86,4 @@
 push/PR 自动跑 GitHub Actions（[`.github/workflows/build.yml`](.github/workflows/build.yml)）：
 
 - `build-arm`：apt 交叉工具链完整编译 + 断言产物为 32-bit ARM hard-float ELF
-- `build-host`：`-Werror` 编译可移植层 + ctest 自测
+- `build-host`：`-Werror` 编译可移植层 + ctest 自测 + SDL 模拟器编译断言 + dummy 无头冒烟（整链路渲染跑 3s）

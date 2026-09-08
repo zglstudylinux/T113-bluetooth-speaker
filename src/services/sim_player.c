@@ -184,4 +184,5 @@ const player_backend_t player_backend_sim = {
     .deinit      = sim_deinit,
     .query_state = sim_query_state,
     .cmd         = sim_cmd,
+    .set_alias   = NULL,    /* 蓝牙广播名是 btmg 独有概念，模拟源不实现 */
 };

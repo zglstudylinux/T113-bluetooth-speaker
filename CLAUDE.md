@@ -25,14 +25,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # host 自测（可移植层：OSAL 队列 + sim 整链路 ctest，无需工具链/板子）
 ./build.sh -host
 
+# x86 SDL 模拟器：构建并弹出 480×640 窗口，sim 播放后端驱动同一份 UI 主题
+# （需 libsdl2-dev libfreetype-dev；鼠标=触摸；也是后续"先 x86 做 UI 再上板"教程的载体）
+./build.sh -sim
+
 # 清理构建目录
 ./build.sh -clean
 ```
 
-- 编译产物：`build/bt_speaker`（ARM 硬浮点 ELF，动态链接；CMake 中间文件在 `build-cmake/`，与产物分开）。
+- 编译产物：`build/bt_speaker`（ARM 硬浮点 ELF，动态链接；CMake 中间文件在 `build-cmake/`，与产物分开）；host 树另有 `build/bt_speaker_sim`（x86-64）。
 - `deploy.sh` 需要 adb 连到虚拟机（板子 USB OTG）；会把 app/字体/图片推到板上 `/mnt/UDISK/speaker/`（rootfs overlay 只有 ~8MB 放不下大文件），BT 库推到 `/lib`、`/usr/lib`，最后 `start-stop-daemon -b` 后台启动。
 - **板侧验证**：`adb shell "ps | grep bt_speaker"`、`adb shell hciconfig hci0`（应 `UP RUNNING PSCAN ISCAN`，ACL MTU 1021）；显示效果用 `adb pull /dev/fb0` 抓帧分析（**字节序 BGRX**，可见页是前 480×640×4 字节）。
-- GitHub CI（`.github/workflows/build.yml`）：push/PR 触发双 job——`build-arm`（apt gnueabihf 真交叉编译 + 断言 ARM ELF）+ `build-host`（-Werror 可移植层 + ctest）。
+- GitHub CI（`.github/workflows/build.yml`）：push/PR 触发双 job——`build-arm`（apt gnueabihf 真交叉编译 + 断言 ARM ELF）+ `build-host`（-Werror 可移植层 + ctest + SDL 模拟器编译断言 + `SDL_VIDEODRIVER=dummy` 无头冒烟 3s）。
 
 ## 构建/部署的关键约定（坑）
 
@@ -40,7 +44,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 2. **OpenWrt wrapper 编译器每次运行都读 `STAGING_DIR`**——toolchain 文件已用 `CMAKE_C_COMPILER_LAUNCHER` + 全局 `RULE_LAUNCH_LINK` 注入（configure 期 `set(ENV)` 不会带进 build 期），勿删。
 3. **`lodepng.c` 的 `#if LV_USE_PNG` 不经过 lv_conf.h**（include 链断了）→ 顶层 CMakeLists 的 `add_compile_definitions(LV_USE_PNG=1 LV_USE_FS_POSIX=1)` 兜底，勿删。
 4. **链接顺序讲究**（`-lbtmg -lshared-mainloop -lbluetooth-internal -lwirelesscom -lgio-2.0 …`，libbtmg 依赖 shared-mainloop，gobject 依赖 libffi）——顺序固化在 `cmake/third_party.cmake` 的 `bt` INTERFACE 库里，勿重排。
-5. **host 环境不能构建 `bt_speaker` 目标**（vendor ARM .so 在 host 链接报 wrong format）——CMakeLists 检测裸名 gcc/cc/clang 时只编 src/tests/ 下两个自测程序并 return；给目标板构建必须带 toolchain 文件。
+5. **host 环境不能构建 `bt_speaker` 目标**（vendor ARM .so 在 host 链接报 wrong format）——CMakeLists 检测裸名 gcc/cc/clang 时编 src/tests/ 两个自测 + SDL 模拟器 `bt_speaker_sim`（缺 SDL2/FreeType 开发库时自动跳过）并 return；给目标板构建必须带 toolchain 文件。
 6. **板上大文件一律放 `/mnt/UDISK`**（app 二进制、字体、图片），rootfs `/` 只有 ~8MB overlay；`adb push` 报 `No space left` 就是放错地方。
 7. **进程必须用 `start-stop-daemon -b -m -S` 启动**（deploy.sh 已做）：直接 `nohup &` 会被 adb 会话退出杀掉。
 8. **换 BT 固件/config 后必须拔 5V 电彻底断电 15s**（RTL8723DS 常供电无复位脚，软 reboot 不清模块 RAM，否则 `H5 sync timed out`）。
@@ -52,15 +56,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 src/core/player_types.h    # 唯一数据契约：player_event_t（208B 定长值类型；-1/空串=不更新）
 src/osal/                  # OS 抽象：队列（16槽满丢最旧）/mutex/time/log；osal_posix.c（Linux）
 src/services/
-├── player_backend.h       # 业务接口：init(emit)/query_state/cmd
+├── player_backend.h       # 业务接口：init(emit)/query_state/cmd/set_alias(可空)
 ├── btmg_player.c          # btmanager 实现：preinit→A2DP Sink|AVRCP→回调组事件 emit 入队
-└── sim_player.c           # 模拟播放器（剧本吐事件；host 开发/CI 用）
+└── sim_player.c           # 模拟播放器（剧本吐事件；host 模拟器/CI 用）
 src/ui/
 ├── ui_backend.h           # UI 接口：init(ui_env_t)/on_event/deinit
-├── theme.h                # D1 液态玻璃主题：色板/素材/布局常量
+├── theme.h                # D1 液态玻璃主题：色板/素材/布局常量（BOARD_RES_PATH 可覆盖）
 └── ui_liquidglass.c       # 绘制/唱盘旋转/乐观更新
 src/ports/                 # 板级：lv_port_disp(fb)/indev(evdev)/font(FreeType) + main_linux.c + lv_conf.h
-src/apps/app_player.c      # 组装层：建队列 → UI init → 后端 init → lv_timer 33ms drain
+└── sdl/                   # x86 模拟器：lv_drv_conf.h(USE_SDL=1,480×640) + disp/indev 端口 + main_sdl.c（-t 秒 冒烟）
+src/apps/app_player.c      # 组装层：建队列 → UI init → 后端 init(经参数选 btmg/sim) → lv_timer 33ms drain
 src/tests/                 # host 自测：osal_test / sim_loop_test（ctest）
 ```
 
@@ -69,6 +74,8 @@ src/tests/                 # host 自测：osal_test / sim_loop_test（ctest）
 **播放按钮乐观更新**：点击瞬间本地切图标（不等 AVRCP 往返 1~2s），事件回来再校正——这是刻意的，勿"修复"。
 
 **图片加载**：bg.png/disc.png（`LV_FS_POSIX_LETTER 'S'`，`src/ui/theme.h` 定义路径）；启动时 `access()` 探测降级。换图同名覆盖重启 app 即生效。
+
+**x86 模拟器（M10）**：板上与模拟器共用 UI 主题/字体端口/组装层，差异只在组装参数与端口——板上 `main_linux.c` 传 `player_backend_btmg` + fb/evdev 端口；模拟器 `main_sdl.c` 传 `player_backend_sim` + SDL 端口，并经 `-DBOARD_RES_PATH=<repo>/assets` 直读 repo 素材。SDL 驱动复用 vendor `lv_drivers/sdl/`（板上构建不编它）；host 版 `lv_drv_conf.h` 在 `src/ports/sdl/`（`LV_CONF_INCLUDE_SIMPLE` 使 sdl.c 命中它而非 third_party 的 USE_SDL=0 版）。
 
 ## LVGL 配置要点（src/ports/lv_conf.h）
 

@@ -242,7 +242,9 @@ btmg avrcp_audio_volume_cb          │
 │   ├── ports/
 │   │   ├── lv_port_disp.c / lv_port_indev.c / lv_port_font.c
 │   │   ├── main_linux.c                # 组装 + 主循环 + drain
-│   │   └── lv_conf.h                   # lvgl __has_include 发现（include 路径里有 src/ports）
+│   │   ├── lv_conf.h                   # lvgl __has_include 发现（include 路径里有 src/ports）
+│   │   └── sdl/                        # x86 模拟器（M10）：lv_drv_conf.h(USE_SDL=1) + disp/indev + main_sdl.c
+│   │                                   #   同一份 UI 主题 + sim 后端，./build.sh -sim 出 480×640 窗口
 │   ├── apps/app_player.c               # 组装层（队列 → UI init → backend init → drain）
 │   └── tests/{osal_test.c,sim_loop_test.c}
 ├── third_party/                        # vendor 不动

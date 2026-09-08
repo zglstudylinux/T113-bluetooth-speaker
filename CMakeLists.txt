@@ -64,7 +64,63 @@ if(_cc_name MATCHES "^(gcc|cc|clang)(-[0-9.]+)?$")
     enable_testing()
     add_test(NAME osal_test COMMAND osal_test)
     add_test(NAME sim_loop_test COMMAND sim_loop_test)
-    message(STATUS "host 编译器：只构建可移植层自测（osal_test / sim_loop_test）；目标板用交叉 toolchain 文件构建")
+
+    # ---------------- x86 SDL 模拟器（./build.sh -sim，产物 build/bt_speaker_sim）----------------
+    # host 上跑完整"sim 后端 → 队列 → drain → 液态玻璃主题"链路，480x640 窗口 = 板上屏。
+    # 缺 libsdl2-dev / libfreetype-dev 时跳过（自测不受影响）；CI 装了就必建。
+    find_package(SDL2 QUIET)
+    find_package(Freetype QUIET)
+    if(SDL2_FOUND AND FREETYPE_FOUND)
+        # lvgl host 副本：镜像 third_party.cmake 的 lvgl 目标，仅 FreeType 头用系统版
+        #（vendor libfreetype.so 是 ARM，host 不能链——系统头配系统库避免版本错配）
+        file(GLOB_RECURSE LVGL_SOURCES ${PROJECT_SOURCE_DIR}/third_party/lvgl/src/*.c)
+        add_library(lvgl STATIC ${LVGL_SOURCES})
+        target_include_directories(lvgl SYSTEM PUBLIC
+            ${PROJECT_SOURCE_DIR}/third_party                    # lvgl.h 在 third_party/lvgl/…
+            ${PROJECT_SOURCE_DIR}/src/ports                      # lv_conf.h 发现（__has_include）
+            ${PROJECT_SOURCE_DIR}/third_party/lvgl/src/extra/libs/freetype  # lv_freetype.h
+            ${FREETYPE_INCLUDE_DIRS})                            # ft2build.h（系统 FreeType）
+        target_link_libraries(lvgl PUBLIC Freetype::Freetype)    # lv_freetype.c 的 FT_* 符号
+
+        # vendor SDL 驱动点亮：仅编 sdl/ 两文件，LV_CONF_INCLUDE_SIMPLE 使
+        # sdl.c 的 `#include "lv_drv_conf.h"` 命中 src/ports/sdl/ 下的 host 版（USE_SDL=1）
+        add_library(sdl_drv STATIC
+            ${PROJECT_SOURCE_DIR}/third_party/lv_drivers/sdl/sdl.c
+            ${PROJECT_SOURCE_DIR}/third_party/lv_drivers/sdl/sdl_common.c)
+        target_compile_definitions(sdl_drv PRIVATE LV_CONF_INCLUDE_SIMPLE)
+        target_include_directories(sdl_drv SYSTEM PRIVATE
+            ${PROJECT_SOURCE_DIR}/src/ports/sdl                  # host lv_drv_conf.h（USE_SDL=1）
+            ${PROJECT_SOURCE_DIR}/third_party)                   # sdl.h → "lvgl/lvgl.h"
+        target_link_libraries(sdl_drv PUBLIC lvgl SDL2::SDL2)
+
+        add_executable(bt_speaker_sim
+            src/ports/sdl/main_sdl.c
+            src/ports/sdl/lv_port_disp.c
+            src/ports/sdl/lv_port_indev.c
+            src/ports/lv_port_font.c                             # 与板上同一份字体端口
+            src/apps/app_player.c
+            src/services/sim_player.c
+            src/ui/ui_liquidglass.c)                             # 与板上同一份主题
+        target_compile_definitions(bt_speaker_sim PRIVATE
+            BOARD_RES_PATH="${PROJECT_SOURCE_DIR}/assets"        # 素材/字体直读 repo
+            LV_CONF_INCLUDE_SIMPLE)                              # sdl.h → "lv_drv_conf.h"（host 版）
+        target_include_directories(bt_speaker_sim PRIVATE
+            ${PROJECT_SOURCE_DIR}/src/osal
+            ${PROJECT_SOURCE_DIR}/src/core
+            ${PROJECT_SOURCE_DIR}/src/services
+            ${PROJECT_SOURCE_DIR}/src/ui
+            ${PROJECT_SOURCE_DIR}/src/ports                      # lv_port_*.h + lv_conf.h
+            ${PROJECT_SOURCE_DIR}/src/ports/sdl                  # host lv_drv_conf.h（USE_SDL=1）
+            ${PROJECT_SOURCE_DIR}/third_party
+            ${PROJECT_SOURCE_DIR}/third_party/lvgl/src/extra/libs/freetype
+            ${FREETYPE_INCLUDE_DIRS})
+        target_link_libraries(bt_speaker_sim PRIVATE lvgl sdl_drv osal sim_backend m)
+        message(STATUS "host 编译器：自测 + SDL 模拟器 bt_speaker_sim（480x640 窗口，./build.sh -sim）")
+    else()
+        message(STATUS "host 编译器：只构建可移植层自测（缺 SDL2/FreeType 开发库，"
+                       "apt install libsdl2-dev libfreetype-dev 后可构建模拟器）")
+    endif()
+    message(STATUS "host 编译器：目标板用交叉 toolchain 文件构建")
     return()
 endif()
 
