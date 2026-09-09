@@ -91,4 +91,5 @@ src/tests/                 # host 自测：osal_test / sim_loop_test（ctest）
 - **里程碑制**：完成一个功能 → 用户上板肉眼/听感确认 → 才 commit/push。不要未经确认就 push。
 - 推送：HTTPS + PAT（`~/.git-credentials` 已存），`git push origin main` 直推即可。
 - 新功能完成后：`docs/project-guide.md` 追加一节（做了什么/踩的坑/验证结果）。
+- **教学课程**：`docs/course/` 是"从零手把手"课程文档（大纲 `00-大纲.md` 定 20 章，样章 `03-第一个窗口.md` 定风格）。新写章节前先读 00 大纲对应章节卡片；章节里的代码必须与仓库实际实现保持一致（教学版允许"极简化 + 注释加倍"，但行为不得偏离）；改了仓库代码要检查已发课程章节是否失配。
 - 用户负责烧录/接线/adb 连接虚拟机；板侧 log 由 Claude 经 adb 抓取分析。
